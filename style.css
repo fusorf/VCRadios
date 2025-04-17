@@ -1,0 +1,123 @@
+/* Général */
+body {
+    margin: 0;
+    background: linear-gradient(135deg, #1a0033, #ff0099);
+    font-family: 'Arial', sans-serif;
+    overflow: hidden;
+    height: 100vh;
+  }
+  
+  /* Scanlines */
+  .scanlines {
+    pointer-events: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-image: repeating-linear-gradient(
+      to bottom,
+      rgba(0, 0, 0, 0.2) 0,
+      rgba(0, 0, 0, 0.2) 1px,
+      transparent 1px,
+      transparent 3px
+    );
+    z-index: 100;
+  }
+  
+  /* Conteneur */
+  .container {
+    position: fixed; /* Utilise fixed pour s'assurer que le bouton reste centré */
+    top: 50%; /* Se positionner à 50% de l'écran */
+    left: 50%; /* Se positionner à 50% de l'écran */
+    transform: translate(-50%, -50%); /* Centrer complètement */
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    width: 100%;
+  }
+  
+  /* Bouton Play */
+  #playButton {
+    font-size: 2rem;
+    padding: 1.2rem 2.5rem;
+    background: transparent;
+    color: #00ffff;
+    border: 2px solid #00ffff;
+    border-radius: 8px;
+    text-shadow: 0 0 8px #ff00cc;
+    cursor: pointer;
+    animation: pulse 1.5s infinite;
+    font-family: 'Courier New', monospace;
+    z-index: 10;
+  }
+  
+  #playButton:hover {
+    background: rgba(255, 255, 255, 0.05);
+  }
+  
+  @keyframes pulse {
+    0%, 100% { box-shadow: 0 0 10px #ff00cc; }
+    50% { box-shadow: 0 0 20px #00ffff; }
+  }
+  
+  /* Carousel - Logos */
+  .carousel {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    transform: translateX(0);
+    transition: transform 0.4s ease;
+    will-change: transform;
+    overflow: visible;
+    width: 100vw;
+    height: 70vh;
+    touch-action: pan-y;
+  }
+  
+  .carousel img {
+    max-width: 30vw;
+    max-height: 60vh;
+    object-fit: contain;
+    margin: 0 auto;
+    opacity: 0; /* Début invisible */
+    transform: translateY(20px); /* Départ légèrement en bas */
+    animation: fadeInUp 0.8s ease-out forwards; /* Animation d'apparition */
+    pointer-events: none;
+  }
+  
+  /* Animation de fondu et montée */
+  @keyframes fadeInUp {
+    0% {
+      opacity: 0;
+      transform: translateY(20px);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  
+  /* Quand un logo devient actif */
+  .carousel img.active {
+    animation: fadeInUp 0.8s ease-out forwards; /* Redémarre l'animation */
+  }
+  
+  /* Limiter la hauteur des SVG à 205px */
+  .carousel img[src$=".svg"] {
+    max-height: 205px; /* Limite la hauteur des SVG à 205px */
+  }
+  
+  /* Limiter la hauteur des WEBP à 60vh */
+  .carousel img[src$=".webp"] {
+    max-height: 205px; /* Limite la hauteur des WEBP à 60vh */
+  }
+  
+  /* Pour cacher le carrousel avant que le bouton Play ne soit cliqué */
+  .carousel.hidden {
+    display: none;
+  }
+  
