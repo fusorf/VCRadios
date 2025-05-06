@@ -10,6 +10,25 @@ const stations = [
   { name: "Wildstyle", file: "radio/WILD.mp3", logo: "logos/WildstylePirateRadio.webp" }
 ];
 
+// Static transition sounds
+const staticSounds = [
+  "sfx/static1.mp3",
+  "sfx/static2.mp3",
+  "sfx/static3.mp3",
+  "sfx/static4.mp3",
+  "sfx/static5.mp3",
+  "sfx/static6.mp3",
+  "sfx/static7.mp3",
+  "sfx/static8.mp3",
+  "sfx/static9.mp3",
+  "sfx/static10.mp3",
+  "sfx/static11.mp3",
+  "sfx/static12.mp3"
+];
+
+// Create a separate audio element for static sounds
+const staticAudio = new Audio();
+
 // Add runtime data to each station
 stations.forEach(s => {
   s.startTime = null;
@@ -22,6 +41,7 @@ stations.forEach(s => {
 // DOM references
 let currentStation = 0;
 let lastSwitchTime = null;
+let isTransitioning = false;
 
 const audio = document.getElementById('audio-player');
 const playButton = document.getElementById('playButton');
@@ -195,6 +215,72 @@ const preloadDurations = () => {
 };
 preloadDurations();
 
+// Get a random static sound file
+const getRandomStaticSound = () => {
+  const randomIndex = Math.floor(Math.random() * staticSounds.length);
+  return staticSounds[randomIndex];
+};
+
+// Play a static transition sound
+const playStaticTransition = (onComplete) => {
+  isTransitioning = true;
+  
+  // Save current volume and fade out main audio
+  const originalVolume = audio.volume;
+  audio.volume = 0;
+  
+  // Configure static audio
+  staticAudio.src = getRandomStaticSound();
+  staticAudio.volume = 1.0;
+  
+  // Play the static sound immediately
+  const staticPlayPromise = staticAudio.play();
+  if (staticPlayPromise) {
+    staticPlayPromise.catch(error => {
+      console.error('Static sound play error:', error);
+      // Continue even if static fails
+      prepareNextStation();
+    });
+  }
+  
+  // Set up the completion handler
+  staticAudio.onended = prepareNextStation;
+  
+  function prepareNextStation() {
+    // Prepare the next station
+    const station = stations[currentStation];
+    
+    // Calculate current playback time
+    const now = Date.now();
+    const elapsed = (now - station.startTime) / 1000;
+    const playTime = station.duration ? (station.initialOffset + elapsed) % station.duration : 0;
+    
+    // Set source and time on main audio
+    audio.src = station.file;
+    audio.currentTime = playTime;
+    audio.loop = true;
+    audio.volume = originalVolume;
+    
+    // Play the station
+    const playPromise = audio.play();
+    if (playPromise) {
+      playPromise.catch(error => {
+        console.error('Station play error:', error);
+        // Quick retry
+        setTimeout(() => audio.play(), 50);
+      });
+    }
+    
+    console.log(`[TRANSITION] Playing station ${currentStation} (${station.name}) at ${playTime.toFixed(2)}s`);
+    
+    // Reset state
+    isTransitioning = false;
+    
+    // Call completion callback
+    if (onComplete) onComplete();
+  }
+};
+
 // Update lock screen media session
 const updateMediaSession = (station) => {
   if ('mediaSession' in navigator) {
@@ -215,18 +301,22 @@ const updateMediaSession = (station) => {
       audio.pause();
     });
     navigator.mediaSession.setActionHandler('previoustrack', () => {
+      if (isTransitioning) return;
       currentStation = (currentStation - 1 + stations.length) % stations.length;
       updateStation();
     });
     navigator.mediaSession.setActionHandler('nexttrack', () => {
+      if (isTransitioning) return;
       currentStation = (currentStation + 1) % stations.length;
       updateStation();
     });
   }
 };
 
-// Update logo + resume audio
+// Update station with transition effect
 const updateStation = () => {
+  if (isTransitioning) return;
+  
   const now = Date.now();
   const newStation = stations[currentStation];
 
@@ -241,41 +331,52 @@ const updateStation = () => {
     }
   }
 
-  // Calculate current playback time
-  const elapsed = (now - newStation.startTime) / 1000;
-  const playTime = newStation.duration ? (newStation.initialOffset + elapsed) % newStation.duration : 0;
-  newStation.lastKnownTime = playTime;
-
   // Update carousel position
   updateCarouselPosition();
   
   // Update Media Session for lock screen
   updateMediaSession(newStation);
 
-  // Play audio
-  audio.src = newStation.file;
-  audio.currentTime = playTime;
-  
-  // Fix iOS loop issue
-  audio.loop = true;
-  
-  // Play audio
-  const playPromise = audio.play();
-  if (playPromise !== undefined) {
-    playPromise.catch(error => {
-      console.error('Playback error:', error);
-      // Auto retry play
-      setTimeout(() => audio.play(), 1000);
-    });
-  }
-  
-  console.log(`[PLAY] Station ${currentStation} (${newStation.name}) resumes at ${playTime.toFixed(2)}s`);
-
   // Trigger mask animation
   animateMaskEffect();
 
   // Update switch time
   lastSwitchTime = now;
+  
+  // Play static transition sound, then switch to the station
+  playStaticTransition();
+};
+
+// Initial play without static transition
+const initialPlay = () => {
+  const now = Date.now();
+  const station = stations[currentStation];
+  
+  // Calculate playback start time
+  const elapsed = (now - station.startTime) / 1000;
+  const playTime = station.duration ? (station.initialOffset + elapsed) % station.duration : 0;
+  
+  // Update Media Session
+  updateMediaSession(station);
+  
+  // Set up audio
+  audio.src = station.file;
+  audio.currentTime = playTime;
+  audio.loop = true;
+  
+  // Play audio
+  const playPromise = audio.play();
+  if (playPromise) {
+    playPromise.catch(error => {
+      console.error('Initial play error:', error);
+      setTimeout(() => audio.play(), 100);
+    });
+  }
+  
+  // Update switch time
+  lastSwitchTime = now;
+  
+  console.log(`[INITIAL] Playing station ${currentStation} (${station.name}) at ${playTime.toFixed(2)}s`);
 };
 
 // Play button click
@@ -288,14 +389,13 @@ playButton.addEventListener('click', () => {
   maskPoints = generateMaskPoints();
   createMaskOverlay();
   
-  updateStation();
+  initialPlay();
   animateMaskEffect();
 });
 
 // Handle end of track for iOS loop issue
 audio.addEventListener('ended', () => {
   console.log('Track ended, restarting...');
-  const station = stations[currentStation];
   audio.currentTime = 0;
   audio.play();
 });
@@ -306,13 +406,14 @@ let startY = null;
 let initialTouch = false;
 
 container.addEventListener('touchstart', e => {
+  if (isTransitioning) return;
   startX = e.touches[0].clientX;
   startY = e.touches[0].clientY;
   initialTouch = true;
 });
 
 container.addEventListener('touchmove', e => {
-  if (!initialTouch) return;
+  if (!initialTouch || isTransitioning) return;
   
   const currentX = e.touches[0].clientX;
   const currentY = e.touches[0].clientY;
@@ -328,7 +429,7 @@ container.addEventListener('touchmove', e => {
 });
 
 container.addEventListener('touchend', e => {
-  if (!initialTouch) return;
+  if (!initialTouch || isTransitioning) return;
   initialTouch = false;
   
   const endX = e.changedTouches[0].clientX;
@@ -352,7 +453,7 @@ container.addEventListener('touchend', e => {
 
 // Keyboard nav
 document.addEventListener('keydown', e => {
-  if (logoContainer.classList.contains('hidden')) return;
+  if (logoContainer.classList.contains('hidden') || isTransitioning) return;
   
   if (e.key === 'ArrowRight') {
     currentStation = (currentStation + 1) % stations.length;
