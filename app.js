@@ -42,6 +42,7 @@ stations.forEach(s => {
 let currentStation = 0;
 let lastSwitchTime = null;
 let isTransitioning = false;
+let previousStationIndex = -1;
 
 const audio = document.getElementById('audio-player');
 const playButton = document.getElementById('playButton');
@@ -171,13 +172,13 @@ const updateStation = () => {
   const newStation = stations[currentStation];
 
   // Pause and store current time of previous station
-  if (lastSwitchTime !== null) {
-    const prevStation = stations.find((s, i) => i !== currentStation && s.startTime !== null);
+  if (lastSwitchTime !== null && previousStationIndex !== -1) {
+    const prevStation = stations[previousStationIndex];
     if (prevStation) {
       const elapsed = (now - lastSwitchTime) / 1000;
       prevStation.lastKnownTime += elapsed;
       prevStation.lastKnownTime %= prevStation.duration || Infinity;
-      console.log(`[SWITCH] Station ${stations.indexOf(prevStation)} (${prevStation.name}) paused at ${prevStation.lastKnownTime.toFixed(2)}s`);
+      console.log(`[SWITCH] Station ${previousStationIndex} (${prevStation.name}) paused at ${prevStation.lastKnownTime.toFixed(2)}s`);
     }
   }
 
@@ -374,9 +375,11 @@ document.addEventListener('keydown', e => {
   if (logoContainer.classList.contains('hidden') || isTransitioning) return;
   
   if (e.key === 'ArrowRight') {
+    previousStationIndex = currentStation;
     currentStation = (currentStation + 1) % stations.length;
     updateStation();
   } else if (e.key === 'ArrowLeft') {
+    previousStationIndex = currentStation;
     currentStation = (currentStation - 1 + stations.length) % stations.length;
     updateStation();
   }
