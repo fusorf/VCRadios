@@ -215,70 +215,32 @@ const preloadDurations = () => {
 };
 preloadDurations();
 
-// Get a random static sound file
+// Variable to keep track of the current static sound index
+let currentStaticIndex = 0;
+
+// Get the next static sound file in order
 const getRandomStaticSound = () => {
-  const randomIndex = Math.floor(Math.random() * staticSounds.length);
-  return staticSounds[randomIndex];
+  const soundFile = staticSounds[currentStaticIndex];
+  currentStaticIndex = (currentStaticIndex + 1) % staticSounds.length; // Move to the next index, loop back if necessary
+  return soundFile;
 };
 
 // Play a static transition sound
-const playStaticTransition = (onComplete) => {
-  isTransitioning = true;
-  
-  // Save current volume and fade out main audio
-  const originalVolume = audio.volume;
-  audio.volume = 0;
-  
-  // Configure static audio
-  staticAudio.src = getRandomStaticSound();
-  staticAudio.volume = 1.0;
-  
-  // Play the static sound immediately
-  const staticPlayPromise = staticAudio.play();
+const playStaticTransition = () => {
+  // Create a new Audio object for each static sound
+  const staticEffect = new Audio(getRandomStaticSound());
+  staticEffect.volume = 1.0;
+
+  // Play the static sound
+  const staticPlayPromise = staticEffect.play();
   if (staticPlayPromise) {
     staticPlayPromise.catch(error => {
       console.error('Static sound play error:', error);
-      // Continue even if static fails
-      prepareNextStation();
     });
   }
-  
-  // Set up the completion handler
-  staticAudio.onended = prepareNextStation;
-  
-  function prepareNextStation() {
-    // Prepare the next station
-    const station = stations[currentStation];
-    
-    // Calculate current playback time
-    const now = Date.now();
-    const elapsed = (now - station.startTime) / 1000;
-    const playTime = station.duration ? (station.initialOffset + elapsed) % station.duration : 0;
-    
-    // Set source and time on main audio
-    audio.src = station.file;
-    audio.currentTime = playTime;
-    audio.loop = true;
-    audio.volume = originalVolume;
-    
-    // Play the station
-    const playPromise = audio.play();
-    if (playPromise) {
-      playPromise.catch(error => {
-        console.error('Station play error:', error);
-        // Quick retry
-        setTimeout(() => audio.play(), 50);
-      });
-    }
-    
-    console.log(`[TRANSITION] Playing station ${currentStation} (${station.name}) at ${playTime.toFixed(2)}s`);
-    
-    // Reset state
-    isTransitioning = false;
-    
-    // Call completion callback
-    if (onComplete) onComplete();
-  }
+
+  // The static sound will play independently and be garbage collected
+  // when it finishes. No need for onended handler here.
 };
 
 // Update lock screen media session
@@ -316,7 +278,8 @@ const updateMediaSession = (station) => {
 // Update station with transition effect
 const updateStation = () => {
   if (isTransitioning) return;
-  
+  isTransitioning = true; // Set transition flag
+
   const now = Date.now();
   const newStation = stations[currentStation];
 
@@ -334,7 +297,7 @@ const updateStation = () => {
   // Update carousel position
   updateCarouselPosition();
   
-  // Update Media Session for lock screen
+  // Update Media Session for lock screen (update immediately for responsiveness)
   updateMediaSession(newStation);
 
   // Trigger mask animation
@@ -343,8 +306,82 @@ const updateStation = () => {
   // Update switch time
   lastSwitchTime = now;
   
-  // Play static transition sound, then switch to the station
-  playStaticTransition();
+  // Define the delay before muting the previous station (in milliseconds)
+  const staticMuteDelay = 50;
+
+  // Define the delay before the next station starts (in milliseconds)
+  const staticUnmuteDelay = 50; // Keep the previous unmute delay
+
+  // Save current volume
+  const originalVolume = audio.volume;
+
+  // Set a timeout to mute the previous station
+  setTimeout(() => {
+    audio.pause();
+    audio.volume = 0; // Ensure no residual sound
+  }, staticMuteDelay);
+
+  // Create and play static transition sound immediately
+  const staticEffect = new Audio(getRandomStaticSound());
+  staticEffect.volume = 1.0;
+
+  // Use loadedmetadata to get the duration of the static sound
+  staticEffect.addEventListener('loadedmetadata', () => {
+    const staticDurationMs = staticEffect.duration * 1000;
+    const delayBeforeUnmute = Math.max(0, staticDurationMs - staticUnmuteDelay);
+
+    // Set a timeout to prepare and play the next station
+    setTimeout(prepareAndPlayNextStation, delayBeforeUnmute);
+  });
+
+  // Fallback if loadedmetadata doesn't fire (e.g., audio loading error)
+  staticEffect.addEventListener('error', () => {
+    console.error('Error loading static sound metadata or playing.');
+    // Proceed with station transition after a short delay
+    setTimeout(prepareAndPlayNextStation, 100);
+  });
+
+  const staticPlayPromise = staticEffect.play();
+  if (staticPlayPromise) {
+    staticPlayPromise.catch(error => {
+      console.error('Static sound play error:', error);
+      // If static sound fails to play, proceed with station transition after a short delay
+      setTimeout(prepareAndPlayNextStation, 100);
+    });
+  }
+
+
+  function prepareAndPlayNextStation() {
+    // Prepare the next station
+    const station = stations[currentStation];
+    
+    // Calculate current playback time
+    const nowAfterTransition = Date.now();
+    // Recalculate elapsed time from the original start time of the station
+    const elapsed = (nowAfterTransition - station.startTime) / 1000;
+    const playTime = station.duration ? (station.initialOffset + elapsed) % station.duration : 0;
+    
+    // Set source and time on main audio
+    audio.src = station.file;
+    audio.currentTime = playTime;
+    audio.loop = true;
+    audio.volume = originalVolume; // Restore original volume
+    
+    // Play the station
+    const playPromise = audio.play();
+    if (playPromise) {
+      playPromise.catch(error => {
+        console.error('Station play error:', error);
+        // Quick retry
+        setTimeout(() => audio.play(), 50);
+      });
+    }
+    
+    console.log(`[TRANSITION] Playing station ${currentStation} (${station.name}) at ${playTime.toFixed(2)}s`);
+    
+    // Reset state
+    isTransitioning = false;
+  }
 };
 
 // Initial play without static transition
