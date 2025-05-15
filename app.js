@@ -265,9 +265,37 @@ const updateStation = () => {
     
     console.log(`[TRANSITION] Playing station ${currentStation} (${station.name}) at ${playTime.toFixed(2)}s`);
     
+    // Preload adjacent stations
+    preloadAdjacentStations();
+
     // Reset state
     isTransitioning = false;
   }
+};
+
+// Preload the next station in the sequence
+// Preload the next and previous stations
+const preloadAdjacentStations = () => {
+  const nextStationIndex = (currentStation + 1) % stations.length;
+  const prevStationIndex = (currentStation - 1 + stations.length) % stations.length;
+  
+  const nextStation = stations[nextStationIndex];
+  const prevStation = stations[prevStationIndex];
+
+  // Preload next station
+  const tempAudioNext = new Audio();
+  tempAudioNext.src = nextStation.file;
+  tempAudioNext.preload = 'auto'; // Start loading the audio data
+  console.log(`[PRELOAD] Started preloading for next station ${nextStationIndex} (${nextStation.name})`);
+
+  // Preload previous station
+  const tempAudioPrev = new Audio();
+  tempAudioPrev.src = prevStation.file;
+  tempAudioPrev.preload = 'auto'; // Start loading the audio data
+  console.log(`[PRELOAD] Started preloading for previous station ${prevStationIndex} (${prevStation.name})`);
+  
+  // We don't need to keep references to tempAudioNext or tempAudioPrev,
+  // the browser's media engine should handle the loading.
 };
 
 // Initial play without static transition
