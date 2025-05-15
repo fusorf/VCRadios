@@ -51,119 +51,6 @@ logoContainer.classList.add('station-carousel', 'hidden');
 container.appendChild(logoContainer);
 
 // Mask effect variables
-let maskPoints = [];
-let animatingMask = false;
-
-// Create SVG mask overlay
-const createMaskOverlay = () => {
-  // Remove existing mask if any
-  const existingMask = document.querySelector('.mask-overlay');
-  if (existingMask) existingMask.remove();
-  
-  // Create SVG element with proper namespace
-  const svgNS = "http://www.w3.org/2000/svg";
-  const svg = document.createElementNS(svgNS, 'svg');
-  svg.classList.add('mask-overlay');
-  svg.setAttribute('width', '100%');
-  svg.setAttribute('height', '100%');
-  
-  // Create a backdrop rectangle (black background)
-  const backdrop = document.createElementNS(svgNS, 'rect');
-  backdrop.id = 'overlay-backdrop';
-  backdrop.setAttribute('width', '100%');
-  backdrop.setAttribute('height', '100%');
-  backdrop.setAttribute('fill', 'rgba(0, 0, 0, 0)'); // Transparent fill that should be black
-  svg.appendChild(backdrop);
-  
-  // Create the polygon that will cut through the backdrop
-  const polygon = document.createElementNS(svgNS, 'polygon');
-  polygon.classList.add('mask-polygon');
-  
-  // Add the polygon to the SVG
-  svg.appendChild(polygon);
-  
-  // Add the SVG to the document
-  document.body.appendChild(svg);
-  
-  return polygon;
-};
-
-// Generate random points for mask (one in each quadrant)
-const generateMaskPoints = () => {
-  const width = window.innerWidth;
-  const height = window.innerHeight;
-  const midX = width / 2;
-  const midY = height / 2;
-  
-  // Generate a point in each quadrant
-  return [
-    // Top-left
-    {
-      x: Math.random() * midX * 0.8 + midX * 0.1,
-      y: Math.random() * midY * 0.8 + midY * 0.1
-    },
-    // Top-right
-    {
-      x: Math.random() * midX * 0.8 + midX * 1.1,
-      y: Math.random() * midY * 0.8 + midY * 0.1
-    },
-    // Bottom-right
-    {
-      x: Math.random() * midX * 0.8 + midX * 1.1,
-      y: Math.random() * midY * 0.8 + midY * 1.1
-    },
-    // Bottom-left
-    {
-      x: Math.random() * midX * 0.8 + midX * 0.1,
-      y: Math.random() * midY * 0.8 + midY * 1.1
-    }
-  ];
-};
-
-// Animate mask effect
-const animateMaskEffect = () => {
-  if (animatingMask) return;
-  animatingMask = true;
-  
-  const startPoints = maskPoints.length ? [...maskPoints] : generateMaskPoints();
-  const targetPoints = generateMaskPoints();
-  const polygon = createMaskOverlay();
-  
-  // Set initial polygon points
-  let pointsStr = startPoints.map(p => `${p.x},${p.y}`).join(' ');
-  polygon.setAttribute('points', pointsStr);
-  
-  // Animate to new points
-  const startTime = Date.now();
-  const duration = 400; // Animation duration in ms - much faster (was 1000ms)
-  
-  const animate = () => {
-    const elapsed = Date.now() - startTime;
-    const progress = Math.min(elapsed / duration, 1);
-    
-    // Calculate current points based on progress
-    const currentPoints = startPoints.map((startP, i) => {
-      const targetP = targetPoints[i];
-      return {
-        x: startP.x + (targetP.x - startP.x) * progress,
-        y: startP.y + (targetP.y - startP.y) * progress
-      };
-    });
-    
-    // Update polygon
-    pointsStr = currentPoints.map(p => `${p.x},${p.y}`).join(' ');
-    polygon.setAttribute('points', pointsStr);
-    
-    if (progress < 1) {
-      requestAnimationFrame(animate);
-    } else {
-      maskPoints = targetPoints;
-      animatingMask = false;
-    }
-  };
-  
-  animate();
-};
 
 // Initialize the station pages carousel
 const initCarousel = () => {
@@ -219,7 +106,7 @@ preloadDurations();
 let currentStaticIndex = 0;
 
 // Get the next static sound file in order
-const getRandomStaticSound = () => {
+const getStaticSound = () => {
   const soundFile = staticSounds[currentStaticIndex];
   currentStaticIndex = (currentStaticIndex + 1) % staticSounds.length; // Move to the next index, loop back if necessary
   return soundFile;
@@ -228,7 +115,7 @@ const getRandomStaticSound = () => {
 // Play a static transition sound
 const playStaticTransition = () => {
   // Create a new Audio object for each static sound
-  const staticEffect = new Audio(getRandomStaticSound());
+  const staticEffect = new Audio(getStaticSound());
   staticEffect.volume = 1.0;
 
   // Play the static sound
@@ -300,8 +187,6 @@ const updateStation = () => {
   // Update Media Session for lock screen (update immediately for responsiveness)
   updateMediaSession(newStation);
 
-  // Trigger mask animation
-  animateMaskEffect();
 
   // Update switch time
   lastSwitchTime = now;
@@ -322,7 +207,7 @@ const updateStation = () => {
   }, staticMuteDelay);
 
   // Create and play static transition sound immediately
-  const staticEffect = new Audio(getRandomStaticSound());
+  const staticEffect = new Audio(getStaticSound());
   staticEffect.volume = 1.0;
 
   // Use loadedmetadata to get the duration of the static sound
@@ -423,11 +308,7 @@ playButton.addEventListener('click', () => {
   
   // Initialize the carousel and mask
   initCarousel();
-  maskPoints = generateMaskPoints();
-  createMaskOverlay();
-  
   initialPlay();
-  animateMaskEffect();
 });
 
 // Handle end of track for iOS loop issue
@@ -498,17 +379,5 @@ document.addEventListener('keydown', e => {
   } else if (e.key === 'ArrowLeft') {
     currentStation = (currentStation - 1 + stations.length) % stations.length;
     updateStation();
-  }
-});
-
-// Handle window resize to update mask
-window.addEventListener('resize', () => {
-  if (!logoContainer.classList.contains('hidden')) {
-    maskPoints = generateMaskPoints();
-    const polygon = document.querySelector('.mask-polygon');
-    if (polygon) {
-      const pointsStr = maskPoints.map(p => `${p.x},${p.y}`).join(' ');
-      polygon.setAttribute('points', pointsStr);
-    }
   }
 });
