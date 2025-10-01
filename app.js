@@ -44,18 +44,41 @@ const logoContainer = document.createElement('div');
 logoContainer.classList.add('station-carousel', 'hidden');
 container.appendChild(logoContainer);
 
+// iOS PWA audio unlock flag
+let audioUnlocked = false;
+
+// Detect if running as PWA on iOS
+const isIOSPWA = () => {
+  return (
+    window.navigator.standalone === true || // iOS Safari PWA
+    window.matchMedia('(display-mode: standalone)').matches // General PWA
+  );
+};
+
 // Preload strategy: load metadata for all, then progressively cache audio files
 const preloadDurations = () => {
   stations.forEach((station, index) => {
+    // For iOS PWA, preload metadata more aggressively
     const tempAudio = new Audio();
     tempAudio.src = station.file;
-    tempAudio.preload = 'metadata'; // Only metadata, not the full file
+    tempAudio.preload = isIOSPWA() ? 'auto' : 'metadata';
+    
     tempAudio.addEventListener('loadedmetadata', () => {
       station.duration = tempAudio.duration;
       station.initialOffset = Math.random() * station.duration;
       station._durationKnown = true;
       console.log(`[METADATA] Station ${index} (${station.name}): ${station.duration.toFixed(2)}s`);
     });
+    
+    // iOS PWA fallback: if metadata doesn't load, use a default duration
+    setTimeout(() => {
+      if (!station._durationKnown) {
+        console.warn(`[METADATA] Station ${index} metadata timeout, using default`);
+        station.duration = 3600; // 1 hour default
+        station.initialOffset = Math.random() * station.duration;
+        station._durationKnown = true;
+      }
+    }, 5000);
   });
 };
 
@@ -225,6 +248,11 @@ const updateStation = () => {
   // Create and play static transition sound
   const staticEffect = new Audio(getStaticSound());
   staticEffect.volume = 1.0;
+  
+  // iOS PWA: load before playing
+  if (isIOSPWA()) {
+    staticEffect.load();
+  }
 
   staticEffect.addEventListener('loadedmetadata', () => {
     const staticDurationMs = staticEffect.duration * 1000;
@@ -241,8 +269,12 @@ const updateStation = () => {
   if (staticPlayPromise) {
     staticPlayPromise.catch(error => {
       console.error('Static sound play error:', error);
+      // Don't let static sound failure prevent station switch
       setTimeout(prepareAndPlayNextStation, 100);
     });
+  } else {
+    // Fallback if play() returns undefined (older browsers)
+    setTimeout(prepareAndPlayNextStation, 100);
   }
 
   function prepareAndPlayNextStation() {
@@ -253,22 +285,33 @@ const updateStation = () => {
     const elapsed = (nowAfterTransition - station.startTime) / 1000;
     const playTime = station.duration ? (station.initialOffset + elapsed) % station.duration : 0;
     
-    // Set source and time on main audio
+    // For iOS PWA: set source first, then load, then set time
     audio.src = station.file;
-    audio.currentTime = playTime;
     audio.loop = true;
     audio.volume = originalVolume;
     
-    // Play the station
-    const playPromise = audio.play();
-    if (playPromise) {
-      playPromise.catch(error => {
-        console.error('Station play error:', error);
-        setTimeout(() => audio.play(), 50);
-      });
+    // Load the audio before trying to set currentTime
+    audio.load();
+    
+    // Set time after load starts (iOS needs this)
+    if (station.duration && playTime > 0) {
+      audio.currentTime = playTime;
     }
     
-    console.log(`[TRANSITION] Playing station ${currentStation} (${station.name}) at ${playTime.toFixed(2)}s`);
+    // Play the station with better error handling for iOS PWA
+    const playPromise = audio.play();
+    if (playPromise) {
+      playPromise.then(() => {
+        console.log(`[TRANSITION] Playing station ${currentStation} (${station.name}) at ${playTime.toFixed(2)}s`);
+      }).catch(error => {
+        console.error('Station play error:', error);
+        // iOS PWA retry strategy
+        audio.load();
+        setTimeout(() => {
+          audio.play().catch(e => console.error('Retry failed:', e));
+        }, 50);
+      });
+    }
 
     // Preload adjacent stations for next switch
     const next = (currentStation + 1) % stations.length;
@@ -316,13 +359,59 @@ const initialPlay = () => {
   progressivePreload();
 };
 
-// Play button click
-playButton.addEventListener('click', () => {
+// Play button click - iOS PWA needs immediate audio interaction
+playButton.addEventListener('click', async () => {
+  // CRITICAL: For iOS PWA, we must call play() synchronously in the click handler
+  // Create a silent audio context first to unlock audio in iOS PWA
+  try {
+    // Try to play a tiny bit of silence to unlock audio API
+    const silentAudio = new Audio();
+    silentAudio.src = 'data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAADhAC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7//////////////////////////////////////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAA4T0Xr8YAAAAAAAAAAAAAAAAAAAA//sQZAAP8AAAaQAAAAgAAA0gAAABAAABpAAAACAAADSAAAAETEFNRTMuMTAwVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV//sQZDgP8AAAaQAAAAgAAA0gAAABAAABpAAAACAAADSAAAAEVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV';
+    silentAudio.volume = 0;
+    await silentAudio.play();
+  } catch (e) {
+    console.log('[IOS PWA] Silent audio unlock attempt:', e);
+  }
+  
   playButton.style.display = 'none';
   logoContainer.classList.remove('hidden');
   
   initCarousel();
-  initialPlay();
+  
+  // Initialize audio element immediately in the click handler
+  const station = stations[currentStation];
+  audio.src = station.file;
+  audio.loop = true;
+  
+  // For iOS PWA: must call load() and play() in the same click handler
+  audio.load();
+  
+  // Start playing immediately (required for iOS PWA)
+  audio.play().then(() => {
+    console.log('[IOS PWA] Audio unlocked successfully');
+    // Now we can set the proper time
+    const now = Date.now();
+    const elapsed = (now - station.startTime) / 1000;
+    const playTime = station.duration ? (station.initialOffset + elapsed) % station.duration : 0;
+    
+    if (station.duration && playTime > 0) {
+      audio.currentTime = playTime;
+    }
+    
+    lastSwitchTime = now;
+    updateMediaSession(station);
+    
+    console.log(`[INITIAL] Playing station ${currentStation} (${station.name}) at ${playTime.toFixed(2)}s`);
+    
+    // Start progressive preloading after initial play
+    progressivePreload();
+  }).catch(error => {
+    console.error('[IOS PWA] Play failed:', error);
+    // Retry with a simpler approach
+    setTimeout(() => {
+      audio.play().catch(e => console.error('[IOS PWA] Retry failed:', e));
+    }, 100);
+  });
 });
 
 // Handle end of track for iOS loop issue
