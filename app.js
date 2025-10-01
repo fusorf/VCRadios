@@ -12,18 +12,9 @@ const stations = [
 
 // Static transition sounds
 const staticSounds = [
-  "sfx/static1.mp3",
-  "sfx/static2.mp3",
-  "sfx/static3.mp3",
-  "sfx/static4.mp3",
-  "sfx/static5.mp3",
-  "sfx/static6.mp3",
-  "sfx/static7.mp3",
-  "sfx/static8.mp3",
-  "sfx/static9.mp3",
-  "sfx/static10.mp3",
-  "sfx/static11.mp3",
-  "sfx/static12.mp3"
+  "sfx/static1.mp3", "sfx/static2.mp3", "sfx/static3.mp3", "sfx/static4.mp3",
+  "sfx/static5.mp3", "sfx/static6.mp3", "sfx/static7.mp3", "sfx/static8.mp3",
+  "sfx/static9.mp3", "sfx/static10.mp3", "sfx/static11.mp3", "sfx/static12.mp3"
 ];
 
 // Initialize all stations with start time NOW
@@ -31,11 +22,13 @@ const appStartTime = Date.now();
 
 // Add runtime data to each station
 stations.forEach(s => {
-  s.startTime = appStartTime; // Set immediately, not in async callback
+  s.startTime = appStartTime;
   s.initialOffset = 0;
   s.duration = null;
   s.lastKnownTime = 0;
   s._durationKnown = false;
+  s._preloading = false;
+  s._preloaded = false;
 });
 
 // DOM references
@@ -51,11 +44,77 @@ const logoContainer = document.createElement('div');
 logoContainer.classList.add('station-carousel', 'hidden');
 container.appendChild(logoContainer);
 
+// Preload strategy: load metadata for all, then progressively cache audio files
+const preloadDurations = () => {
+  stations.forEach((station, index) => {
+    const tempAudio = new Audio();
+    tempAudio.src = station.file;
+    tempAudio.preload = 'metadata'; // Only metadata, not the full file
+    tempAudio.addEventListener('loadedmetadata', () => {
+      station.duration = tempAudio.duration;
+      station.initialOffset = Math.random() * station.duration;
+      station._durationKnown = true;
+      console.log(`[METADATA] Station ${index} (${station.name}): ${station.duration.toFixed(2)}s`);
+    });
+  });
+};
+
+// Progressive station preloading via Service Worker
+const progressivePreload = () => {
+  if (!('serviceWorker' in navigator)) return;
+  
+  // Preload current station first
+  preloadStationInBackground(currentStation);
+  
+  // Then preload adjacent stations
+  setTimeout(() => {
+    const next = (currentStation + 1) % stations.length;
+    const prev = (currentStation - 1 + stations.length) % stations.length;
+    preloadStationInBackground(next);
+    preloadStationInBackground(prev);
+  }, 2000);
+  
+  // Finally, preload remaining stations in the background over time
+  setTimeout(() => {
+    stations.forEach((station, index) => {
+      if (!station._preloaded && index !== currentStation) {
+        setTimeout(() => preloadStationInBackground(index), index * 5000);
+      }
+    });
+  }, 10000);
+};
+
+const preloadStationInBackground = (stationIndex) => {
+  const station = stations[stationIndex];
+  if (station._preloading || station._preloaded) return;
+  
+  station._preloading = true;
+  console.log(`[PRELOAD] Background caching station ${stationIndex} (${station.name})`);
+  
+  if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+    navigator.serviceWorker.controller.postMessage({
+      type: 'PRELOAD_STATION',
+      url: station.file
+    });
+  }
+  
+  // Also trigger browser preload
+  const preloadLink = document.createElement('link');
+  preloadLink.rel = 'prefetch';
+  preloadLink.href = station.file;
+  preloadLink.as = 'audio';
+  document.head.appendChild(preloadLink);
+  
+  station._preloaded = true;
+  station._preloading = false;
+};
+
+preloadDurations();
+
 // Initialize the station pages carousel
 const initCarousel = () => {
   logoContainer.innerHTML = '';
   
-  // Create a page for each station
   stations.forEach((station, index) => {
     const page = document.createElement('div');
     page.classList.add('station-page');
@@ -80,25 +139,8 @@ const updateCarouselPosition = () => {
     page.classList.toggle('active', index === currentStation);
   });
   
-  // Transform the container to show current station
   logoContainer.style.transform = `translateX(-${currentStation * 100}%)`;
 };
-
-// Preload durations and random offsets
-const preloadDurations = () => {
-  stations.forEach((station, index) => {
-    const tempAudio = new Audio();
-    tempAudio.src = station.file;
-    tempAudio.preload = 'metadata';
-    tempAudio.addEventListener('loadedmetadata', () => {
-      station.duration = tempAudio.duration;
-      station.initialOffset = Math.random() * station.duration;
-      station._durationKnown = true;
-      console.log(`[PRELOAD] Station ${index} (${station.name}) duration: ${station.duration.toFixed(2)}s → start at ${station.initialOffset.toFixed(2)}s`);
-    });
-  });
-};
-preloadDurations();
 
 // Variable to keep track of the current static sound index
 let currentStaticIndex = 0;
@@ -122,7 +164,6 @@ const updateMediaSession = (station) => {
       ]
     });
     
-    // Set action handlers for media session
     navigator.mediaSession.setActionHandler('play', () => {
       audio.play();
     });
@@ -157,7 +198,6 @@ const updateStation = () => {
       const elapsed = (now - lastSwitchTime) / 1000;
       prevStation.lastKnownTime += elapsed;
       prevStation.lastKnownTime %= prevStation.duration || Infinity;
-      console.log(`[SWITCH] Station ${previousStationIndex} (${prevStation.name}) paused at ${prevStation.lastKnownTime.toFixed(2)}s`);
     }
   }
 
@@ -170,14 +210,13 @@ const updateStation = () => {
   // Update switch time
   lastSwitchTime = now;
   
-  // Define the delay before muting the previous station
   const staticMuteDelay = 50;
   const staticUnmuteDelay = 50;
 
   // Save current volume
   const originalVolume = audio.volume;
 
-  // Set a timeout to mute the previous station
+  // Mute previous station
   setTimeout(() => {
     audio.pause();
     audio.volume = 0;
@@ -187,15 +226,12 @@ const updateStation = () => {
   const staticEffect = new Audio(getStaticSound());
   staticEffect.volume = 1.0;
 
-  // Use loadedmetadata to get the duration of the static sound
   staticEffect.addEventListener('loadedmetadata', () => {
     const staticDurationMs = staticEffect.duration * 1000;
     const delayBeforeUnmute = Math.max(0, staticDurationMs - staticUnmuteDelay);
-
     setTimeout(prepareAndPlayNextStation, delayBeforeUnmute);
   });
 
-  // Fallback if loadedmetadata doesn't fire
   staticEffect.addEventListener('error', () => {
     console.error('Error loading static sound metadata or playing.');
     setTimeout(prepareAndPlayNextStation, 100);
@@ -210,7 +246,6 @@ const updateStation = () => {
   }
 
   function prepareAndPlayNextStation() {
-    // Prepare the next station
     const station = stations[currentStation];
     
     // Calculate current playback time
@@ -234,6 +269,12 @@ const updateStation = () => {
     }
     
     console.log(`[TRANSITION] Playing station ${currentStation} (${station.name}) at ${playTime.toFixed(2)}s`);
+
+    // Preload adjacent stations for next switch
+    const next = (currentStation + 1) % stations.length;
+    const prev = (currentStation - 1 + stations.length) % stations.length;
+    preloadStationInBackground(next);
+    preloadStationInBackground(prev);
 
     // Reset state
     isTransitioning = false;
@@ -270,6 +311,9 @@ const initialPlay = () => {
   lastSwitchTime = now;
   
   console.log(`[INITIAL] Playing station ${currentStation} (${station.name}) at ${playTime.toFixed(2)}s`);
+  
+  // Start progressive preloading after initial play
+  progressivePreload();
 };
 
 // Play button click
@@ -277,7 +321,6 @@ playButton.addEventListener('click', () => {
   playButton.style.display = 'none';
   logoContainer.classList.remove('hidden');
   
-  // Initialize the carousel
   initCarousel();
   initialPlay();
 });
@@ -289,7 +332,7 @@ audio.addEventListener('ended', () => {
   audio.play();
 });
 
-// Swipe support for mobile paging
+// Swipe support for mobile
 let startX = null;
 let startY = null;
 let initialTouch = false;
