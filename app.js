@@ -26,12 +26,12 @@ const staticSounds = [
   "sfx/static12.mp3"
 ];
 
-// Create a separate audio element for static sounds
-const staticAudio = new Audio();
+// Initialize all stations with start time NOW
+const appStartTime = Date.now();
 
 // Add runtime data to each station
 stations.forEach(s => {
-  s.startTime = null;
+  s.startTime = appStartTime; // Set immediately, not in async callback
   s.initialOffset = 0;
   s.duration = null;
   s.lastKnownTime = 0;
@@ -50,8 +50,6 @@ const container = document.querySelector('.container');
 const logoContainer = document.createElement('div');
 logoContainer.classList.add('station-carousel', 'hidden');
 container.appendChild(logoContainer);
-
-// Mask effect variables
 
 // Initialize the station pages carousel
 const initCarousel = () => {
@@ -96,7 +94,6 @@ const preloadDurations = () => {
       station.duration = tempAudio.duration;
       station.initialOffset = Math.random() * station.duration;
       station._durationKnown = true;
-      station.startTime = Date.now();
       console.log(`[PRELOAD] Station ${index} (${station.name}) duration: ${station.duration.toFixed(2)}s → start at ${station.initialOffset.toFixed(2)}s`);
     });
   });
@@ -109,26 +106,8 @@ let currentStaticIndex = 0;
 // Get the next static sound file in order
 const getStaticSound = () => {
   const soundFile = staticSounds[currentStaticIndex];
-  currentStaticIndex = (currentStaticIndex + 1) % staticSounds.length; // Move to the next index, loop back if necessary
+  currentStaticIndex = (currentStaticIndex + 1) % staticSounds.length;
   return soundFile;
-};
-
-// Play a static transition sound
-const playStaticTransition = () => {
-  // Create a new Audio object for each static sound
-  const staticEffect = new Audio(getStaticSound());
-  staticEffect.volume = 1.0;
-
-  // Play the static sound
-  const staticPlayPromise = staticEffect.play();
-  if (staticPlayPromise) {
-    staticPlayPromise.catch(error => {
-      console.error('Static sound play error:', error);
-    });
-  }
-
-  // The static sound will play independently and be garbage collected
-  // when it finishes. No need for onended handler here.
 };
 
 // Update lock screen media session
@@ -166,7 +145,7 @@ const updateMediaSession = (station) => {
 // Update station with transition effect
 const updateStation = () => {
   if (isTransitioning) return;
-  isTransitioning = true; // Set transition flag
+  isTransitioning = true;
 
   const now = Date.now();
   const newStation = stations[currentStation];
@@ -185,18 +164,15 @@ const updateStation = () => {
   // Update carousel position
   updateCarouselPosition();
   
-  // Update Media Session for lock screen (update immediately for responsiveness)
+  // Update Media Session for lock screen
   updateMediaSession(newStation);
-
 
   // Update switch time
   lastSwitchTime = now;
   
-  // Define the delay before muting the previous station (in milliseconds)
+  // Define the delay before muting the previous station
   const staticMuteDelay = 50;
-
-  // Define the delay before the next station starts (in milliseconds)
-  const staticUnmuteDelay = 50; // Keep the previous unmute delay
+  const staticUnmuteDelay = 50;
 
   // Save current volume
   const originalVolume = audio.volume;
@@ -204,10 +180,10 @@ const updateStation = () => {
   // Set a timeout to mute the previous station
   setTimeout(() => {
     audio.pause();
-    audio.volume = 0; // Ensure no residual sound
+    audio.volume = 0;
   }, staticMuteDelay);
 
-  // Create and play static transition sound immediately
+  // Create and play static transition sound
   const staticEffect = new Audio(getStaticSound());
   staticEffect.volume = 1.0;
 
@@ -216,14 +192,12 @@ const updateStation = () => {
     const staticDurationMs = staticEffect.duration * 1000;
     const delayBeforeUnmute = Math.max(0, staticDurationMs - staticUnmuteDelay);
 
-    // Set a timeout to prepare and play the next station
     setTimeout(prepareAndPlayNextStation, delayBeforeUnmute);
   });
 
-  // Fallback if loadedmetadata doesn't fire (e.g., audio loading error)
+  // Fallback if loadedmetadata doesn't fire
   staticEffect.addEventListener('error', () => {
     console.error('Error loading static sound metadata or playing.');
-    // Proceed with station transition after a short delay
     setTimeout(prepareAndPlayNextStation, 100);
   });
 
@@ -231,11 +205,9 @@ const updateStation = () => {
   if (staticPlayPromise) {
     staticPlayPromise.catch(error => {
       console.error('Static sound play error:', error);
-      // If static sound fails to play, proceed with station transition after a short delay
       setTimeout(prepareAndPlayNextStation, 100);
     });
   }
-
 
   function prepareAndPlayNextStation() {
     // Prepare the next station
@@ -243,7 +215,6 @@ const updateStation = () => {
     
     // Calculate current playback time
     const nowAfterTransition = Date.now();
-    // Recalculate elapsed time from the original start time of the station
     const elapsed = (nowAfterTransition - station.startTime) / 1000;
     const playTime = station.duration ? (station.initialOffset + elapsed) % station.duration : 0;
     
@@ -251,51 +222,22 @@ const updateStation = () => {
     audio.src = station.file;
     audio.currentTime = playTime;
     audio.loop = true;
-    audio.volume = originalVolume; // Restore original volume
+    audio.volume = originalVolume;
     
     // Play the station
     const playPromise = audio.play();
     if (playPromise) {
       playPromise.catch(error => {
         console.error('Station play error:', error);
-        // Quick retry
         setTimeout(() => audio.play(), 50);
       });
     }
     
     console.log(`[TRANSITION] Playing station ${currentStation} (${station.name}) at ${playTime.toFixed(2)}s`);
-    
-    // Preload adjacent stations
-    preloadAdjacentStations();
 
     // Reset state
     isTransitioning = false;
   }
-};
-
-// Preload the next station in the sequence
-// Preload the next and previous stations
-const preloadAdjacentStations = () => {
-  const nextStationIndex = (currentStation + 1) % stations.length;
-  const prevStationIndex = (currentStation - 1 + stations.length) % stations.length;
-  
-  const nextStation = stations[nextStationIndex];
-  const prevStation = stations[prevStationIndex];
-
-  // Preload next station
-  const tempAudioNext = new Audio();
-  tempAudioNext.src = nextStation.file;
-  tempAudioNext.preload = 'auto'; // Start loading the audio data
-  console.log(`[PRELOAD] Started preloading for next station ${nextStationIndex} (${nextStation.name})`);
-
-  // Preload previous station
-  const tempAudioPrev = new Audio();
-  tempAudioPrev.src = prevStation.file;
-  tempAudioPrev.preload = 'auto'; // Start loading the audio data
-  console.log(`[PRELOAD] Started preloading for previous station ${prevStationIndex} (${prevStation.name})`);
-  
-  // We don't need to keep references to tempAudioNext or tempAudioPrev,
-  // the browser's media engine should handle the loading.
 };
 
 // Initial play without static transition
@@ -335,7 +277,7 @@ playButton.addEventListener('click', () => {
   playButton.style.display = 'none';
   logoContainer.classList.remove('hidden');
   
-  // Initialize the carousel and mask
+  // Initialize the carousel
   initCarousel();
   initialPlay();
 });
@@ -365,13 +307,11 @@ container.addEventListener('touchmove', e => {
   const currentX = e.touches[0].clientX;
   const currentY = e.touches[0].clientY;
   
-  // Calculate horizontal and vertical movement
   const deltaX = startX - currentX;
   const deltaY = Math.abs(startY - currentY);
   
-  // If horizontal movement is greater than vertical, it's likely a swipe
   if (Math.abs(deltaX) > deltaY && Math.abs(deltaX) > 5) {
-    e.preventDefault(); // Prevent default to avoid scrolling
+    e.preventDefault();
   }
 });
 
@@ -382,13 +322,10 @@ container.addEventListener('touchend', e => {
   const endX = e.changedTouches[0].clientX;
   const deltaX = startX - endX;
   
-  // Check if swipe was long enough to change station
   if (Math.abs(deltaX) > 50) {
     if (deltaX > 0) {
-      // Swipe left - next station
       currentStation = (currentStation + 1) % stations.length;
     } else {
-      // Swipe right - previous station
       currentStation = (currentStation - 1 + stations.length) % stations.length;
     }
     updateStation();
