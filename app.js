@@ -6,10 +6,10 @@
 // (tactile + souris) avec bouclage circulaire dans le sens du geste.
 // ---------------------------------------------------------------------------
 
-// Fichiers radio servis depuis Cloudflare R2 (bucket "vicecity"), même
-// principe que xeno-series-heardle. Les statics et logos restent locaux.
-// URL publique du bucket : R2 → vicecity → Settings → Public access.
-const AUDIO_BASE_URL = 'https://pub-78e65d92e7574926a519b54ecff12c87.r2.dev';
+// Fichiers radio servis depuis le bucket R2 "vicecity" via le Worker proxy
+// (worker/index.js) : l'URL publique de dev pub-*.r2.dev est rate-limitée
+// par Cloudflare et lâchait des requêtes aléatoirement.
+const AUDIO_BASE_URL = 'https://vcradios-audio.fusorf.workers.dev';
 
 const stations = [
   { name: "Emotion 98.3", file: "radio/EMOTION.mp3", logo: "logos/Emotion98.3-GTAVC-Logo.webp" },
@@ -296,6 +296,8 @@ const setupMediaSession = () => {
 // --- Lecture ---------------------------------------------------------------
 // Prépare les stations adjacentes : le navigateur bufferise autour de leur
 // position live, le prochain switch part donc d'une zone déjà chargée.
+// Différé de 3 s après chaque lecture pour laisser toute la bande passante
+// au démarrage de la station courante.
 const warmNeighbors = () => {
   const next = mod(currentStation + 1, stations.length);
   const prev = mod(currentStation - 1, stations.length);
@@ -306,6 +308,15 @@ const warmNeighbors = () => {
   });
 };
 
+let warmTimer = null;
+const scheduleWarm = () => {
+  if (warmTimer) clearTimeout(warmTimer);
+  warmTimer = setTimeout(() => {
+    warmTimer = null;
+    warmNeighbors();
+  }, 3000);
+};
+
 const playStation = (index) => {
   const el = players[index];
   if (!syncToLive(index)) {
@@ -313,8 +324,18 @@ const playStation = (index) => {
       if (index === currentStation) syncToLive(index);
     }, { once: true });
   }
-  el.play().catch(() => {});
-  warmNeighbors();
+  el.play().catch(() => {
+    // play() refusé (ex : switch déclenché par un pointercancel, donc hors
+    // activation utilisateur) : retente au prochain geste
+    const retry = () => {
+      document.removeEventListener('pointerup', retry, true);
+      document.removeEventListener('keydown', retry, true);
+      if (index === currentStation) playStation(index);
+    };
+    document.addEventListener('pointerup', retry, true);
+    document.addEventListener('keydown', retry, true);
+  });
+  scheduleWarm();
 };
 
 const stopAll = () => {
@@ -364,17 +385,11 @@ playButton.addEventListener('click', () => {
   initAudioCtx();
   if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
 
-  // Bénédiction iOS de tous les lecteurs dans le geste du clic : play() +
-  // pause() synchrones — inaudible (aucune trame audio rendue) — pour que
-  // tous les play() programmatiques futurs (fin de static, écran de
-  // verrouillage) soient autorisés sur chaque élément
-  players.forEach((el, index) => {
-    if (index === currentStation) return;
-    const blessing = el.play();
-    if (blessing && blessing.catch) blessing.catch(() => {});
-    el.pause();
-  });
-
+  // Pas de bénédiction de masse des 9 lecteurs : même mis en pause aussitôt,
+  // un élément "play()é" continue de bufferiser agressivement (~15 Mo chacun,
+  // soit >100 Mo qui asphyxient le démarrage). Chaque station est bénie dans
+  // le geste de son propre switch (setStation), avec retry au geste suivant
+  // si un play() est refusé.
   playStation(currentStation);
 });
 
@@ -390,7 +405,7 @@ setInterval(() => {
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible') return;
   const el = players[currentStation];
-  if (!el.paused) syncToLive(currentStation);
+  if (!el.paused) syncToLive(currentStation, 10);
 });
 
 // Filet de sécurité si loop déraille (vieux iOS) : repart sur la position live
@@ -401,19 +416,43 @@ players.forEach((el, index) => {
   });
 });
 
-// Un seek vers une zone non "seekable" (pas encore bufferisée, ou serveur sans
-// support Range) est rogné par le navigateur : la lecture partirait d'un point
-// quasi aléatoire. On vérifie donc la position dès que la lecture démarre puis
-// en continu, et on re-seek jusqu'à retomber sur le direct.
+// Auto-guérison : une erreur réseau (rate limit r2.dev, coupure…) laisse
+// l'élément mort jusqu'à un reload. On le réinitialise avec un backoff
+// exponentiel et on relance la lecture si c'est la station courante.
+const retryDelays = players.map(() => 0);
+players.forEach((el, index) => {
+  el.addEventListener('playing', () => { retryDelays[index] = 0; });
+  el.addEventListener('error', () => {
+    retryDelays[index] = Math.min(15000, retryDelays[index] ? retryDelays[index] * 2 : 1500);
+    setTimeout(() => {
+      el.load();
+      el.addEventListener('loadedmetadata', () => {
+        if (index === currentStation && started) {
+          syncToLive(index);
+          el.play().catch(() => {});
+        }
+      }, { once: true });
+    }, retryDelays[index]);
+  });
+});
+
+// Un seek vers une zone non "seekable" (seek rogné par le navigateur) ou une
+// grosse dérive laisseraient la lecture loin du direct : on vérifie au
+// démarrage de la lecture puis en continu. Tolérance large (10 s) : un retard
+// dû au buffering est inaudible pour une radio, alors que re-seeker trop tôt
+// jette le buffer en cours et peut empêcher indéfiniment le démarrage.
 players.forEach((el, index) => {
   el.addEventListener('playing', () => {
-    if (index === currentStation) syncToLive(index, 3);
+    if (index === currentStation) syncToLive(index, 10);
   });
 });
 
 setInterval(() => {
   const el = players[currentStation];
-  if (!el.paused) syncToLive(currentStation, 3);
+  // jamais pendant un seek/buffering en cours : on relancerait la roue
+  if (!el.paused && !el.seeking && el.readyState >= 3) {
+    syncToLive(currentStation, 10);
+  }
 }, 4000);
 
 // --- Clavier ---------------------------------------------------------------

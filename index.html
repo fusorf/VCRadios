@@ -4,11 +4,9 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Vice City Radio</title>
-    <!-- Connexion TLS vers R2 établie dès le chargement (gagne ~300-600 ms
-         sur le démarrage audio mobile) ; les deux variantes couvrent les
-         requêtes no-cors (éléments audio) et cors (préchargement SW) -->
-    <link rel="preconnect" href="https://pub-78e65d92e7574926a519b54ecff12c87.r2.dev" />
-    <link rel="preconnect" href="https://pub-78e65d92e7574926a519b54ecff12c87.r2.dev" crossorigin />
+    <!-- Connexion TLS vers le Worker audio établie dès le chargement
+         (gagne ~300-600 ms sur le démarrage audio mobile) -->
+    <link rel="preconnect" href="https://vcradios-audio.fusorf.workers.dev" />
     <link rel="stylesheet" href="style.css" />
     <meta name="theme-color" content="#ff0099" />
     <link rel="icon" href="./favicon.ico" type="image/x-icon" />
