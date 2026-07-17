@@ -11,16 +11,22 @@
 // par Cloudflare et lâchait des requêtes aléatoirement.
 const AUDIO_BASE_URL = 'https://vcradios-audio.fusorf.workers.dev';
 
+// Durées codées en dur (les fichiers ne changent jamais) : iOS estime la
+// durée d'un MP3 progressivement pendant le chargement, donc s'appuyer sur
+// el.duration donnait des positions fausses et instables entre les refresh,
+// et des seeks rognés (lecture depuis 0). Avec des constantes, la position
+// live est calculable immédiatement, avant toute métadonnée, et identique
+// sur tous les appareils.
 const stations = [
-  { name: "Emotion 98.3", file: "radio/EMOTION.mp3", logo: "logos/Emotion98.3-GTAVC-Logo.webp" },
-  { name: "Radio Espantoso", file: "radio/ESPANT.mp3", logo: "logos/RadioEspantoso-GTAVC-Logo.webp" },
-  { name: "Fever 105", file: "radio/FEVER.mp3", logo: "logos/Fever_105.webp" },
-  { name: "Flash FM", file: "radio/FLASH.mp3", logo: "logos/FlashFM.webp" },
-  { name: "K-Chat", file: "radio/KCHAT.mp3", logo: "logos/KChat-GTAVC-Logo.webp" },
-  { name: "VCPR", file: "radio/VCPR.mp3", logo: "logos/ViceCityPublicRadio-GTAVC-Logo.svg" },
-  { name: "V-Rock", file: "radio/VROCK.mp3", logo: "logos/V-Rock-GTAVC-Logo.svg" },
-  { name: "Wave 103", file: "radio/WAVE.mp3", logo: "logos/Wave103-GTAVC-Logo.svg" },
-  { name: "Wildstyle", file: "radio/WILD.mp3", logo: "logos/WildstylePirateRadio.webp" }
+  { name: "Emotion 98.3", file: "radio/EMOTION.mp3", logo: "logos/Emotion98.3-GTAVC-Logo.webp", duration: 3546.828 },
+  { name: "Radio Espantoso", file: "radio/ESPANT.mp3", logo: "logos/RadioEspantoso-GTAVC-Logo.webp", duration: 3698.233 },
+  { name: "Fever 105", file: "radio/FEVER.mp3", logo: "logos/Fever_105.webp", duration: 3793.189 },
+  { name: "Flash FM", file: "radio/FLASH.mp3", logo: "logos/FlashFM.webp", duration: 3587.840 },
+  { name: "K-Chat", file: "radio/KCHAT.mp3", logo: "logos/KChat-GTAVC-Logo.webp", duration: 6235.668 },
+  { name: "VCPR", file: "radio/VCPR.mp3", logo: "logos/ViceCityPublicRadio-GTAVC-Logo.svg", duration: 5184.252 },
+  { name: "V-Rock", file: "radio/VROCK.mp3", logo: "logos/V-Rock-GTAVC-Logo.svg", duration: 4644.232 },
+  { name: "Wave 103", file: "radio/WAVE.mp3", logo: "logos/Wave103-GTAVC-Logo.svg", duration: 3966.772 },
+  { name: "Wildstyle", file: "radio/WILD.mp3", logo: "logos/WildstylePirateRadio.webp", duration: 4107.207 }
 ];
 
 const STATIC_SOUNDS = [
@@ -89,10 +95,8 @@ const players = stations.map(station => {
 });
 
 const livePosition = (index) => {
-  const duration = players[index].duration;
-  if (!isFinite(duration) || duration <= 0) return null;
   const elapsed = (Date.now() - EPOCH) / 1000 + offsets[index];
-  return mod(elapsed, duration);
+  return mod(elapsed, stations[index].duration);
 };
 
 // Cible du dernier seek demandé par élément. WebKit (iOS) peut ignorer
@@ -108,14 +112,14 @@ const seekIntents = stations.map(() => null);
 const syncToLive = (index, tolerance = 1.5) => {
   const el = players[index];
   const pos = livePosition(index);
-  if (pos === null) return false;
   const delta = Math.abs(el.currentTime - pos);
-  const drift = Math.min(delta, el.duration - delta);
+  const drift = Math.min(delta, stations[index].duration - delta);
   if (drift > tolerance) {
+    // posé même avant les métadonnées : devient la "default playback start
+    // position", appliquée par le navigateur dès que les données arrivent
     el.currentTime = pos;
     seekIntents[index] = pos;
   }
-  return true;
 };
 
 // --- Statics via Web Audio (décodés une fois, déclenchement instantané) ----
@@ -373,13 +377,7 @@ const warmNeighbors = () => {
   [next, prev].forEach(index => {
     const el = players[index];
     el.preload = 'auto';
-    if (el.paused && !syncToLive(index)) {
-      // métadonnées pas encore là : se recaler dès qu'elles arrivent, sinon
-      // le buffering se ferait au début du fichier au lieu de la zone live
-      el.addEventListener('loadedmetadata', () => {
-        if (el.paused) syncToLive(index);
-      }, { once: true });
-    }
+    if (el.paused) syncToLive(index);
   });
 };
 
@@ -394,11 +392,7 @@ const scheduleWarm = () => {
 
 const playStation = (index) => {
   const el = players[index];
-  if (!syncToLive(index)) {
-    el.addEventListener('loadedmetadata', () => {
-      if (index === currentStation) syncToLive(index);
-    }, { once: true });
-  }
+  syncToLive(index);
   el.play().catch(() => {
     // play() refusé (ex : switch déclenché par un pointercancel, donc hors
     // activation utilisateur) : retente au prochain geste
@@ -502,12 +496,10 @@ players.forEach((el, index) => {
     retryDelays[index] = Math.min(15000, retryDelays[index] ? retryDelays[index] * 2 : 1500);
     setTimeout(() => {
       el.load();
-      el.addEventListener('loadedmetadata', () => {
-        if (index === currentStation && started) {
-          syncToLive(index);
-          el.play().catch(() => {});
-        }
-      }, { once: true });
+      if (index === currentStation && started) {
+        syncToLive(index);
+        el.play().catch(() => {});
+      }
     }, retryDelays[index]);
   });
 });
