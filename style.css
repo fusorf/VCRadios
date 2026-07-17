@@ -286,6 +286,18 @@ body {
   border: none;
 }
 
+/* Sur tactile : volume inutile (boutons physiques, et iOS ignore el.volume) ;
+   le bouton retour prend sa place */
+@media (hover: none) {
+  .volume-selector {
+    display: none;
+  }
+
+  .back-toggle {
+    right: 18px;
+  }
+}
+
 /* Carrousel des stations : pages empilées, positionnées en JS (translateX) */
 .station-carousel {
   position: absolute;
