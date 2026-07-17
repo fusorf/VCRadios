@@ -59,7 +59,6 @@ const loadLastStation = () => {
 // --- État ------------------------------------------------------------------
 let currentStation = loadLastStation();
 let audioUnlocked = false;
-let pendingSwitch = null;
 
 const container = document.querySelector('.container');
 
@@ -72,9 +71,15 @@ const audioPool = document.createElement('div');
 audioPool.style.display = 'none';
 document.body.appendChild(audioPool);
 
-const players = stations.map(station => {
+const players = stations.map((station, index) => {
   const el = document.createElement('audio');
-  el.preload = 'metadata';
+  // métadonnées d'avance uniquement pour la station courante et ses voisines :
+  // 9 requêtes simultanées vers R2 au chargement ralentissent le démarrage
+  // mobile ; les autres chargeront à la demande (couvert par le static)
+  const isNear = index === currentStation
+    || index === mod(currentStation + 1, stations.length)
+    || index === mod(currentStation - 1, stations.length);
+  el.preload = isNear ? 'metadata' : 'none';
   el.loop = true;
   el.src = stationUrl(station);
   audioPool.appendChild(el);
@@ -285,47 +290,6 @@ const setupMediaSession = () => {
   navigator.mediaSession.setActionHandler('nexttrack', () => step(1));
 };
 
-// --- Préchargement complet via Service Worker ------------------------------
-const canPreloadHeavy = () => {
-  const conn = navigator.connection;
-  if (!conn) return true;
-  return !conn.saveData && !/(^|-)2g$/.test(conn.effectiveType || '');
-};
-
-const requestFullPreload = (index) => {
-  const station = stations[index];
-  if (station.preloaded || !('serviceWorker' in navigator) || !canPreloadHeavy()) return;
-  navigator.serviceWorker.ready.then(reg => {
-    if (reg.active) {
-      reg.active.postMessage({
-        type: 'PRELOAD_STATION',
-        url: stationUrl(station)
-      });
-    }
-  }).catch(() => {});
-};
-
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.addEventListener('message', event => {
-    const data = event.data;
-    if (!data || data.type !== 'STATION_PRELOADED' || !data.ok) return;
-    const station = stations.find(s => data.url === stationUrl(s));
-    if (station) station.preloaded = true;
-  });
-}
-
-const scheduleFullPreloads = () => {
-  const next = mod(currentStation + 1, stations.length);
-  const prev = mod(currentStation - 1, stations.length);
-  const order = [currentStation, next, prev];
-  stations.forEach((_, i) => { if (!order.includes(i)) order.push(i); });
-  order.forEach((index, rank) => {
-    setTimeout(() => requestFullPreload(index), 2000 + rank * 8000);
-  });
-  // Filet de sécurité : retente les stations manquées (le SW ignore celles déjà en cache)
-  setInterval(() => stations.forEach((_, i) => requestFullPreload(i)), 120000);
-};
-
 // --- Lecture ---------------------------------------------------------------
 // Prépare les stations adjacentes : le navigateur bufferise autour de leur
 // position live, le prochain switch part donc d'une zone déjà chargée.
@@ -337,8 +301,6 @@ const warmNeighbors = () => {
     el.preload = 'auto';
     if (el.paused) syncToLive(index);
   });
-  requestFullPreload(next);
-  requestFullPreload(prev);
 };
 
 const playStation = (index) => {
@@ -362,32 +324,13 @@ const setStation = (index) => {
 
   updateMediaSessionMetadata();
 
-  // Coupure immédiate couverte par le static ; le zapping rapide reste fluide :
-  // chaque switch annule le démarrage en attente du précédent (debounce)
+  // Coupure immédiate, static par-dessus le démarrage de la nouvelle station,
+  // comme en jeu. Le play() doit rester SYNCHRONE dans le geste utilisateur :
+  // iOS bénit chaque élément audio individuellement lors d'un play() en
+  // contexte de geste, et un setTimeout casserait cette activation.
   stopAll();
-  const staticDuration = playStatic();
-  if (pendingSwitch) clearTimeout(pendingSwitch);
-  pendingSwitch = setTimeout(() => {
-    pendingSwitch = null;
-    playStation(currentStation);
-  }, Math.max(80, staticDuration * 1000 - 60));
-};
-
-// Débloque la lecture programmatique de tous les lecteurs pendant le geste
-// utilisateur (requis par iOS : un play() par élément dans le contexte du tap)
-const primePlayers = () => {
-  players.forEach((el, index) => {
-    if (index === currentStation) return;
-    el.muted = true;
-    const p = el.play();
-    if (p && p.then) {
-      p.then(() => {
-        el.muted = false;
-        // ne pas couper la station si l'utilisateur a switché dessus entre-temps
-        if (index !== currentStation) el.pause();
-      }).catch(() => { el.muted = false; });
-    }
-  });
+  playStatic();
+  playStation(currentStation);
 };
 
 // --- Démarrage -------------------------------------------------------------
@@ -400,12 +343,7 @@ const unlockAudio = () => {
   audioUnlocked = true;
   initAudioCtx();
   if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
-  primePlayers();
   playStation(currentStation);
-  scheduleFullPreloads();
-  if (navigator.storage && navigator.storage.persist) {
-    navigator.storage.persist().catch(() => {});
-  }
 };
 
 initCarousel();
@@ -423,7 +361,9 @@ if (autoplayPossible) {
   }
 }
 
-document.addEventListener('pointerdown', unlockAudio, true);
+// pointerup et non pointerdown : iOS n'accorde l'activation utilisateur
+// (autorisation de jouer du son) qu'au relâchement du tap, pas à l'appui
+document.addEventListener('pointerup', unlockAudio, true);
 document.addEventListener('keydown', unlockAudio, true);
 
 // Resynchronise les stations voisines en pause pour que le prochain switch
