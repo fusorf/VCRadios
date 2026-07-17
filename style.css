@@ -186,6 +186,13 @@ body {
   box-shadow: 0 4px 15px rgba(249, 102, 173, 0.45);
 }
 
+.back-toggle svg,
+.volume-toggle svg {
+  width: 20px;
+  height: 20px;
+  filter: drop-shadow(2px 2px 0 #000);
+}
+
 /* Contrôle du volume (repris de xeno-series-heardle, thème rose),
    visible aussi sur mobile */
 .volume-selector {

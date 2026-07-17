@@ -36,9 +36,11 @@
       <h2 class="picker-title">Choisis ta station</h2>
       <div class="picker-grid"></div>
     </div>
-    <button class="back-toggle" id="backButton" style="display: none;" title="Retour à la sélection">←</button>
+    <button class="back-toggle" id="backButton" style="display: none;" title="Retour à la sélection">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#f966ad" d="M20 9.2H11.6V4.4L3.2 12l8.4 7.6v-4.8H20Z"/></svg>
+    </button>
     <div class="volume-selector" id="volumeSelector">
-      <button class="volume-toggle" id="volumeToggle">🔊</button>
+      <button class="volume-toggle" id="volumeToggle"></button>
       <div class="volume-menu" id="volumeMenu" style="display: none;">
         <span class="volume-value" id="volumeValue">100%</span>
         <input type="range" class="volume-slider" id="volumeSlider" min="0" max="100" value="100" />

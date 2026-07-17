@@ -178,8 +178,18 @@ const applyVolume = () => {
   if (staticGain) staticGain.gain.value = globalVolume;
 };
 
+// Icônes SVG roses avec ombre noire (via CSS drop-shadow), assorties au thème
+const SPEAKER_PATH = '<path fill="#f966ad" d="M3.5 9v6h3.8l4.9 4.2V4.8L7.3 9Z"/>';
+const VOLUME_ICONS = {
+  high: `<svg viewBox="0 0 24 24" aria-hidden="true">${SPEAKER_PATH}<path fill="none" stroke="#f966ad" stroke-width="2" stroke-linecap="round" d="M15 9.6a3.4 3.4 0 0 1 0 4.8"/><path fill="none" stroke="#f966ad" stroke-width="2" stroke-linecap="round" d="M17.8 7.2a6.8 6.8 0 0 1 0 9.6"/></svg>`,
+  low: `<svg viewBox="0 0 24 24" aria-hidden="true">${SPEAKER_PATH}<path fill="none" stroke="#f966ad" stroke-width="2" stroke-linecap="round" d="M15 9.6a3.4 3.4 0 0 1 0 4.8"/></svg>`,
+  muted: `<svg viewBox="0 0 24 24" aria-hidden="true">${SPEAKER_PATH}<path fill="none" stroke="#f966ad" stroke-width="2" stroke-linecap="round" d="M15 9.5 20.5 15M20.5 9.5 15 15"/></svg>`
+};
+
 const updateVolumeIcon = () => {
-  volumeToggle.textContent = globalVolume === 0 ? '🔇' : globalVolume < 0.5 ? '🔈' : '🔊';
+  volumeToggle.innerHTML = globalVolume === 0
+    ? VOLUME_ICONS.muted
+    : globalVolume < 0.5 ? VOLUME_ICONS.low : VOLUME_ICONS.high;
 };
 
 const setGlobalVolume = (val) => {
