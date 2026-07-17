@@ -101,30 +101,64 @@ body {
   white-space: nowrap;
 }
 
-/* Bouton de lancement */
-#playButton {
+/* Grille de choix de station (écran d'accueil, sert de geste de déblocage) */
+#stationPicker {
   position: fixed;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
   z-index: 70;
-  background: none;
-  border: none;
-  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(16px, 3vh, 28px);
+  padding-top: 40px;
+  box-sizing: border-box;
+}
+
+.picker-title {
+  margin: 0;
   font-family: 'Pricedown', 'Arial', sans-serif;
-  font-size: clamp(2.2rem, 7vw, 3.6rem);
+  font-weight: normal;
+  font-size: clamp(1.6rem, 5vw, 2.6rem);
   color: #f966ad;
-  text-shadow: 5px 5px 0 #000;
-  animation: btnPulse 1.6s ease-in-out infinite;
+  text-shadow: 4px 4px 0 #000;
 }
 
-#playButton:hover {
-  color: #ffffff;
+.picker-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: clamp(10px, 2vw, 18px);
+  width: min(92vw, 640px);
 }
 
-@keyframes btnPulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.55; }
+.picker-tile {
+  background: #46414f url('logos/background.png');
+  background-size: 340px;
+  border: 2px solid rgba(249, 102, 173, 0.35);
+  border-radius: 10px;
+  cursor: pointer;
+  padding: 10px;
+  height: clamp(84px, 16vw, 130px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.picker-tile:hover {
+  border-color: #f966ad;
+  box-shadow: 0 0 18px rgba(249, 102, 173, 0.45);
+  transform: scale(1.04);
+}
+
+.picker-tile img {
+  max-width: 85%;
+  max-height: 80%;
+  object-fit: contain;
+  pointer-events: none;
 }
 
 /* Contrôle du volume (repris de xeno-series-heardle, thème rose),

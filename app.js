@@ -517,18 +517,24 @@ const blessAllPlayers = () => {
 };
 
 // --- Démarrage -------------------------------------------------------------
-initCarousel();
-setupMediaSession();
-updateMediaSessionMetadata();
+// Grille de choix de station : cliquer une tuile lance directement la radio
+// choisie, et le clic sert de geste de déblocage audio (AudioContext,
+// bénédiction iOS des 9 lecteurs).
+const stationPicker = document.getElementById('stationPicker');
 
-const playButton = document.getElementById('playButton');
-
-playButton.addEventListener('click', () => {
+const startRadio = (index) => {
   if (started) return;
   started = true;
-  playButton.style.display = 'none';
+  currentStation = index;
+  try { localStorage.setItem('vcr-station', String(index)); } catch (e) {}
+
+  carouselPos = index;
+  carouselTarget = index;
+  stationPicker.style.display = 'none';
   logoContainer.classList.remove('hidden');
+  renderCarousel();
   updateStationTitle();
+  updateMediaSessionMetadata();
   retargetMask();
 
   initAudioCtx();
@@ -536,7 +542,26 @@ playButton.addEventListener('click', () => {
 
   if (IS_IOS) blessAllPlayers();
   playStation(currentStation);
-});
+};
+
+const initPicker = () => {
+  const grid = stationPicker.querySelector('.picker-grid');
+  stations.forEach((station, index) => {
+    const tile = document.createElement('button');
+    tile.classList.add('picker-tile');
+    const img = document.createElement('img');
+    img.src = station.logo;
+    img.alt = station.name;
+    tile.appendChild(img);
+    tile.addEventListener('click', () => startRadio(index));
+    grid.appendChild(tile);
+  });
+};
+
+initCarousel();
+initPicker();
+setupMediaSession();
+updateMediaSessionMetadata();
 
 // Resynchronise les stations voisines en pause pour que le prochain switch
 // tombe dans une zone déjà bufferisée
