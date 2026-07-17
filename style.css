@@ -134,24 +134,23 @@ body {
   width: min(92vw, 640px);
 }
 
+/* Tuiles en quadrilatères irréguliers (clip-path posé en JS), même esprit
+   que le masque : au survol, le polygone se re-déforme aléatoirement */
 .picker-tile {
   background: #46414f url('logos/background.png');
   background-size: 340px;
-  border: 2px solid rgba(249, 102, 173, 0.35);
-  border-radius: 10px;
+  border: none;
   cursor: pointer;
   padding: 10px;
   height: clamp(84px, 16vw, 130px);
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+  transition: clip-path 0.35s ease, filter 0.2s ease;
 }
 
 .picker-tile:hover {
-  border-color: #f966ad;
-  box-shadow: 0 0 18px rgba(249, 102, 173, 0.45);
-  transform: scale(1.04);
+  filter: brightness(1.25);
 }
 
 .picker-tile img {

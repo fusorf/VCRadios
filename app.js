@@ -578,15 +578,28 @@ backButton.addEventListener('click', () => {
   closeMask();
 });
 
+// Quadrilatère irrégulier pour une tuile : chaque coin est tiré dans son
+// propre angle, jusqu'à 14 % vers l'intérieur — même famille de formes que
+// le masque plein écran
+const randomTilePoly = () => {
+  const r = () => (Math.random() * 14).toFixed(1);
+  return `polygon(${r()}% ${r()}%, ${100 - r()}% ${r()}%, ${100 - r()}% ${100 - r()}%, ${r()}% ${100 - r()}%)`;
+};
+
 const initPicker = () => {
   const grid = stationPicker.querySelector('.picker-grid');
   stations.forEach((station, index) => {
     const tile = document.createElement('button');
     tile.classList.add('picker-tile');
+    tile.style.clipPath = randomTilePoly();
     const img = document.createElement('img');
     img.src = station.logo;
     img.alt = station.name;
     tile.appendChild(img);
+    // le polygone se re-déforme à chaque survol (morph animé en CSS)
+    tile.addEventListener('pointerenter', () => {
+      tile.style.clipPath = randomTilePoly();
+    });
     tile.addEventListener('click', () => pickStation(index));
     grid.appendChild(tile);
   });
