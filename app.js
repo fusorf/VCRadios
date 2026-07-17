@@ -280,7 +280,7 @@ const goTo = (target) => {
 // Avance d'un cran dans une direction (flèches, media session) : la cible non
 // bornée garantit le bouclage dans le même sens
 const step = (direction) => {
-  if (!started) return;
+  if (!started || pickerOpen()) return;
   goTo(Math.round(carouselTarget) + direction);
 };
 
@@ -329,12 +329,19 @@ const animateMask = (now) => {
   maskRaf = t < 1 ? requestAnimationFrame(animateMask) : null;
 };
 
-const retargetMask = () => {
+const retargetMaskTo = (points) => {
   maskFrom = maskPoints.map(p => ({ ...p }));
-  maskTo = randomMaskPoints();
+  maskTo = points;
   maskAnimStart = performance.now();
   if (maskRaf === null) maskRaf = requestAnimationFrame(animateMask);
 };
+
+const retargetMask = () => retargetMaskTo(randomMaskPoints());
+
+// Referme la fenêtre (retour à l'écran de sélection)
+const closeMask = () => retargetMaskTo([
+  { x: 50, y: 50 }, { x: 50, y: 50 }, { x: 50, y: 50 }, { x: 50, y: 50 }
+]);
 
 renderMask(maskPoints);
 
@@ -350,7 +357,7 @@ let dragLastT = 0;
 let dragVelocity = 0; // px/ms lissée
 
 container.addEventListener('pointerdown', e => {
-  if (!started) return;
+  if (!started || pickerOpen()) return;
   dragging = true;
   container.setPointerCapture(e.pointerId);
   container.classList.add('dragging');
@@ -519,18 +526,20 @@ const blessAllPlayers = () => {
 // --- Démarrage -------------------------------------------------------------
 // Grille de choix de station : cliquer une tuile lance directement la radio
 // choisie, et le clic sert de geste de déblocage audio (AudioContext,
-// bénédiction iOS des 9 lecteurs).
+// bénédiction iOS des 9 lecteurs). Le bouton retour rouvre la grille sans
+// couper la lecture en cours.
 const stationPicker = document.getElementById('stationPicker');
+const backButton = document.getElementById('backButton');
+
+const pickerOpen = () => stationPicker.style.display !== 'none';
 
 const startRadio = (index) => {
-  if (started) return;
   started = true;
   currentStation = index;
   try { localStorage.setItem('vcr-station', String(index)); } catch (e) {}
 
   carouselPos = index;
   carouselTarget = index;
-  stationPicker.style.display = 'none';
   logoContainer.classList.remove('hidden');
   renderCarousel();
   updateStationTitle();
@@ -544,6 +553,31 @@ const startRadio = (index) => {
   playStation(currentStation);
 };
 
+const pickStation = (index) => {
+  stationPicker.style.display = 'none';
+  backButton.style.display = 'flex';
+  if (!started) {
+    startRadio(index);
+    return;
+  }
+  // la radio n'a jamais été coupée : on rouvre la fenêtre, et on ne switche
+  // que si une autre station a été choisie
+  if (index !== currentStation) {
+    carouselPos = index;
+    carouselTarget = index;
+    renderCarousel();
+    setStation(index); // static + switch + masque + titre
+  } else {
+    retargetMask();
+  }
+};
+
+backButton.addEventListener('click', () => {
+  backButton.style.display = 'none';
+  stationPicker.style.display = 'flex';
+  closeMask();
+});
+
 const initPicker = () => {
   const grid = stationPicker.querySelector('.picker-grid');
   stations.forEach((station, index) => {
@@ -553,7 +587,7 @@ const initPicker = () => {
     img.src = station.logo;
     img.alt = station.name;
     tile.appendChild(img);
-    tile.addEventListener('click', () => startRadio(index));
+    tile.addEventListener('click', () => pickStation(index));
     grid.appendChild(tile);
   });
 };

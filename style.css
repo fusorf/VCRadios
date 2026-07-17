@@ -161,6 +161,32 @@ body {
   pointer-events: none;
 }
 
+/* Bouton retour vers la sélection, à gauche du volume */
+.back-toggle {
+  position: fixed;
+  right: 68px;
+  bottom: 18px;
+  z-index: 80;
+  width: 40px;
+  height: 40px;
+  border: 2px solid rgba(249, 102, 173, 0.55);
+  background: rgba(15, 10, 18, 0.85);
+  color: #ffffff;
+  font-size: 1.3rem;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.back-toggle:hover {
+  background: rgba(249, 102, 173, 0.2);
+  border-color: #f966ad;
+  box-shadow: 0 4px 15px rgba(249, 102, 173, 0.45);
+}
+
 /* Contrôle du volume (repris de xeno-series-heardle, thème rose),
    visible aussi sur mobile */
 .volume-selector {
