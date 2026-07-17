@@ -47,6 +47,34 @@ body {
   cursor: grabbing;
 }
 
+/* Bouton Play */
+#playButton {
+  font-size: 2rem;
+  padding: 1.2rem 2.5rem;
+  background: transparent;
+  color: #00ffff;
+  border: 2px solid #00ffff;
+  border-radius: 8px;
+  text-shadow: 0 0 8px #ff00cc;
+  cursor: pointer;
+  animation: pulse 1.5s infinite;
+  font-family: 'Courier New', monospace;
+  z-index: 10;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+#playButton:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+@keyframes pulse {
+  0%, 100% { box-shadow: 0 0 10px #ff00cc; }
+  50% { box-shadow: 0 0 20px #00ffff; }
+}
+
 /* Carrousel des stations : pages empilées, positionnées en JS (translateX) */
 .station-carousel {
   position: absolute;
@@ -54,6 +82,10 @@ body {
   left: 0;
   width: 100%;
   height: 100%;
+}
+
+.station-carousel.hidden {
+  display: none;
 }
 
 .station-page {

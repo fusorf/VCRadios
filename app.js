@@ -58,12 +58,13 @@ const loadLastStation = () => {
 
 // --- État ------------------------------------------------------------------
 let currentStation = loadLastStation();
-let audioUnlocked = false;
+let started = false;
+let pendingSwitch = null;
 
 const container = document.querySelector('.container');
 
 const logoContainer = document.createElement('div');
-logoContainer.classList.add('station-carousel');
+logoContainer.classList.add('station-carousel', 'hidden');
 container.appendChild(logoContainer);
 
 // --- Pool d'éléments audio (un par station, jamais rechargés) --------------
@@ -213,6 +214,7 @@ const goTo = (target) => {
 // Avance d'un cran dans une direction (flèches, media session) : la cible non
 // bornée garantit le bouclage dans le même sens
 const step = (direction) => {
+  if (!started) return;
   goTo(Math.round(carouselTarget) + direction);
 };
 
@@ -224,6 +226,7 @@ let dragLastT = 0;
 let dragVelocity = 0; // px/ms lissée
 
 container.addEventListener('pointerdown', e => {
+  if (!started) return;
   dragging = true;
   container.setPointerCapture(e.pointerId);
   container.classList.add('dragging');
@@ -324,47 +327,56 @@ const setStation = (index) => {
 
   updateMediaSessionMetadata();
 
-  // Coupure immédiate, static par-dessus le démarrage de la nouvelle station,
-  // comme en jeu. Le play() doit rester SYNCHRONE dans le geste utilisateur :
-  // iOS bénit chaque élément audio individuellement lors d'un play() en
-  // contexte de geste, et un setTimeout casserait cette activation.
+  // Coupure immédiate, static seul, puis la nouvelle station démarre à la fin
+  // du static. iOS n'autorise un play() différé que sur un élément déjà "béni"
+  // par un play() en contexte de geste : on bénit donc ici, de façon inaudible
+  // (pause immédiate, aucune trame audio rendue), et pendant le static le seek
+  // vers la position live remplit le buffer au bon endroit.
   stopAll();
-  playStatic();
-  playStation(currentStation);
+  const staticDuration = playStatic();
+
+  const el = players[currentStation];
+  syncToLive(currentStation);
+  const blessing = el.play();
+  if (blessing && blessing.catch) blessing.catch(() => {});
+  el.pause();
+
+  if (pendingSwitch) clearTimeout(pendingSwitch);
+  pendingSwitch = setTimeout(() => {
+    pendingSwitch = null;
+    if (index === currentStation) playStation(index);
+  }, Math.max(80, staticDuration * 1000 - 60));
 };
 
 // --- Démarrage -------------------------------------------------------------
-// Page radio directe, sans bouton. L'autoplay avec son étant souvent bloqué
-// au premier chargement, on le tente quand même (PWA installée / engagement
-// élevé) et sinon la lecture démarre au premier geste, le carrousel étant
-// déjà utilisable.
-const unlockAudio = () => {
-  if (audioUnlocked) return;
-  audioUnlocked = true;
-  initAudioCtx();
-  if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
-  playStation(currentStation);
-};
-
 initCarousel();
 setupMediaSession();
 updateMediaSessionMetadata();
 
-// Ne sonde l'autoplay que s'il a une chance d'aboutir : un play() refusé
-// laisse un avertissement console même quand le rejet est intercepté
-const autoplayPossible = typeof navigator.getAutoplayPolicy !== 'function'
-  || navigator.getAutoplayPolicy('mediaelement') === 'allowed';
-if (autoplayPossible) {
-  const autoplayProbe = players[currentStation].play();
-  if (autoplayProbe && autoplayProbe.then) {
-    autoplayProbe.then(() => unlockAudio()).catch(() => { /* attendre un geste */ });
-  }
-}
+const playButton = document.getElementById('playButton');
 
-// pointerup et non pointerdown : iOS n'accorde l'activation utilisateur
-// (autorisation de jouer du son) qu'au relâchement du tap, pas à l'appui
-document.addEventListener('pointerup', unlockAudio, true);
-document.addEventListener('keydown', unlockAudio, true);
+playButton.addEventListener('click', () => {
+  if (started) return;
+  started = true;
+  playButton.style.display = 'none';
+  logoContainer.classList.remove('hidden');
+
+  initAudioCtx();
+  if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+
+  // Bénédiction iOS de tous les lecteurs dans le geste du clic : play() +
+  // pause() synchrones — inaudible (aucune trame audio rendue) — pour que
+  // tous les play() programmatiques futurs (fin de static, écran de
+  // verrouillage) soient autorisés sur chaque élément
+  players.forEach((el, index) => {
+    if (index === currentStation) return;
+    const blessing = el.play();
+    if (blessing && blessing.catch) blessing.catch(() => {});
+    el.pause();
+  });
+
+  playStation(currentStation);
+});
 
 // Resynchronise les stations voisines en pause pour que le prochain switch
 // tombe dans une zone déjà bufferisée
