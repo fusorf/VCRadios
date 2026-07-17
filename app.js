@@ -321,7 +321,7 @@ const goTo = (target) => {
 // Avance d'un cran dans une direction (flèches, media session) : la cible non
 // bornée garantit le bouclage dans le même sens
 const step = (direction) => {
-  if (!started || pickerOpen()) return;
+  if (!started || pickerOpen() || returningToMenu) return;
   goTo(Math.round(carouselTarget) + direction);
 };
 
@@ -398,7 +398,7 @@ let dragLastT = 0;
 let dragVelocity = 0; // px/ms lissée
 
 container.addEventListener('pointerdown', e => {
-  if (!started || pickerOpen()) return;
+  if (!started || pickerOpen() || returningToMenu) return;
   dragging = true;
   container.setPointerCapture(e.pointerId);
   container.classList.add('dragging');
@@ -596,6 +596,7 @@ const startRadio = (index) => {
 
 const pickStation = (index) => {
   stationPicker.style.display = 'none';
+  stationPicker.classList.remove('appear');
   backButton.style.display = 'flex';
   if (!started) {
     startRadio(index); // crée l'AudioContext dans le geste, avant le sfx
@@ -615,11 +616,21 @@ const pickStation = (index) => {
   }
 };
 
+let returningToMenu = false;
+
 backButton.addEventListener('click', () => {
+  if (returningToMenu) return;
+  returningToMenu = true;
   playUiSfx('cancel');
   backButton.style.display = 'none';
-  stationPicker.style.display = 'flex';
   closeMask();
+  // attendre que l'interface se soit repliée (lerp du masque) avant de
+  // faire apparaître la grille en fondu
+  setTimeout(() => {
+    returningToMenu = false;
+    stationPicker.style.display = 'flex';
+    stationPicker.classList.add('appear');
+  }, MASK_DURATION + 100);
 });
 
 // Sons de survol (souris uniquement : au tactile, pointerenter accompagne le

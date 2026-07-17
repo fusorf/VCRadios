@@ -118,6 +118,15 @@ body {
   box-sizing: border-box;
 }
 
+#stationPicker.appear {
+  animation: pickerFadeIn 0.45s ease forwards;
+}
+
+@keyframes pickerFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
 .picker-title {
   margin: 0;
   font-family: 'Pricedown', 'Arial', sans-serif;
