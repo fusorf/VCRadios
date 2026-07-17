@@ -72,15 +72,12 @@ const audioPool = document.createElement('div');
 audioPool.style.display = 'none';
 document.body.appendChild(audioPool);
 
-const players = stations.map((station, index) => {
+const players = stations.map(station => {
   const el = document.createElement('audio');
-  // métadonnées d'avance uniquement pour la station courante et ses voisines :
-  // 9 requêtes simultanées vers R2 au chargement ralentissent le démarrage
-  // mobile ; les autres chargeront à la demande (couvert par le static)
-  const isNear = index === currentStation
-    || index === mod(currentStation + 1, stations.length)
-    || index === mod(currentStation - 1, stations.length);
-  el.preload = isNear ? 'metadata' : 'none';
+  // métadonnées chargées pour les 9 stations (quelques centaines de Ko au
+  // total) : sans durée connue, un switch vers une station "froide" partirait
+  // du début du fichier au lieu de sa position live
+  el.preload = 'metadata';
   el.loop = true;
   el.src = stationUrl(station);
   audioPool.appendChild(el);
@@ -304,7 +301,13 @@ const warmNeighbors = () => {
   [next, prev].forEach(index => {
     const el = players[index];
     el.preload = 'auto';
-    if (el.paused) syncToLive(index);
+    if (el.paused && !syncToLive(index)) {
+      // métadonnées pas encore là : se recaler dès qu'elles arrivent, sinon
+      // le buffering se ferait au début du fichier au lieu de la zone live
+      el.addEventListener('loadedmetadata', () => {
+        if (el.paused) syncToLive(index);
+      }, { once: true });
+    }
   });
 };
 
