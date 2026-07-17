@@ -437,6 +437,34 @@ const setStation = (index) => {
   }, Math.max(80, staticDuration * 1000 - 60));
 };
 
+// --- Déblocage iOS ---------------------------------------------------------
+// Sur iOS, CHAQUE élément audio doit avoir reçu un play() dans un geste
+// utilisateur au moins une fois avant de pouvoir être joué programmatiquement
+// (le play différé post-static échoue sinon). On bénit donc les 9 lecteurs au
+// clic du bouton, avec un silence en data-URI : aucun réseau, aucune
+// bufferisation (bénir avec les vraies sources déclenchait ~15 Mo de
+// préchargement par élément), puis on restaure la vraie source — le flag
+// d'autorisation est porté par l'élément, pas par la source.
+const SILENT_WAV = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
+const IS_IOS = /iP(hone|ad|od)/.test(navigator.userAgent)
+  || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+const blessAllPlayers = () => {
+  players.forEach((el, index) => {
+    if (index === currentStation) return; // la station courante joue dans le geste
+    const realSrc = el.src;
+    el.src = SILENT_WAV;
+    const p = el.play();
+    if (p && p.catch) p.catch(() => {});
+    setTimeout(() => {
+      el.pause();
+      el.src = realSrc;
+      el.preload = 'metadata';
+      syncToLive(index);
+    }, 80);
+  });
+};
+
 // --- Démarrage -------------------------------------------------------------
 initCarousel();
 setupMediaSession();
@@ -455,11 +483,7 @@ playButton.addEventListener('click', () => {
   initAudioCtx();
   if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
 
-  // Pas de bénédiction de masse des 9 lecteurs : même mis en pause aussitôt,
-  // un élément "play()é" continue de bufferiser agressivement (~15 Mo chacun,
-  // soit >100 Mo qui asphyxient le démarrage). Chaque station est bénie dans
-  // le geste de son propre switch (setStation), avec retry au geste suivant
-  // si un play() est refusé.
+  if (IS_IOS) blessAllPlayers();
   playStation(currentStation);
 });
 
@@ -513,6 +537,16 @@ players.forEach((el, index) => {
 //   pause (WebKit/iOS) et a repris à l'ancienne position → on recale, cette
 //   fois en cours de lecture où les seeks fonctionnent partout.
 players.forEach((el, index) => {
+  // iOS peut jeter un seek posé avant les métadonnées : on le ré-asserte dès
+  // que l'élément est prêt, AVANT le démarrage audible
+  el.addEventListener('canplay', () => {
+    const intended = seekIntents[index];
+    if (index === currentStation && intended !== null
+        && Math.abs(el.currentTime - intended) > 2.5) {
+      el.currentTime = intended;
+    }
+  });
+
   el.addEventListener('playing', () => {
     if (index !== currentStation) return;
     const intended = seekIntents[index];
