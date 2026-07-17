@@ -91,6 +91,13 @@ const livePosition = (index) => {
   return mod(elapsed, duration);
 };
 
+// Cible du dernier seek demandé par élément. WebKit (iOS) peut ignorer
+// silencieusement un seek posé sur un élément en pause (le getter currentTime
+// renvoie pourtant la nouvelle valeur) et reprendre la lecture à l'ancienne
+// position interne : on vérifie donc au 'playing' que la lecture a bien
+// démarré à la cible demandée.
+const seekIntents = stations.map(() => null);
+
 // Recale un lecteur sur sa position "live". Distance circulaire : au moment où
 // le fichier boucle, currentTime et la position live sont aux deux extrémités
 // du fichier sans être réellement désynchronisés.
@@ -100,7 +107,10 @@ const syncToLive = (index, tolerance = 1.5) => {
   if (pos === null) return false;
   const delta = Math.abs(el.currentTime - pos);
   const drift = Math.min(delta, el.duration - delta);
-  if (drift > tolerance) el.currentTime = pos;
+  if (drift > tolerance) {
+    el.currentTime = pos;
+    seekIntents[index] = pos;
+  }
   return true;
 };
 
@@ -352,18 +362,15 @@ const setStation = (index) => {
   updateMediaSessionMetadata();
 
   // Coupure immédiate, static seul, puis la nouvelle station démarre à la fin
-  // du static. iOS n'autorise un play() différé que sur un élément déjà "béni"
-  // par un play() en contexte de geste : on bénit donc ici, de façon inaudible
-  // (pause immédiate, aucune trame audio rendue), et pendant le static le seek
-  // vers la position live remplit le buffer au bon endroit.
+  // du static. Le seek pendant le static remplit le buffer au bon endroit.
+  // PAS de play()+pause() de "bénédiction" ici : la course play→pause→play
+  // peut laisser l'élément en pause (le pause interne se résout après le play
+  // final sur un pipeline lent — silence aléatoire constaté sur iOS). Le play
+  // différé reste autorisé : WebKit propage l'activation utilisateur à
+  // travers un setTimeout court, et le retry-au-geste couvre le reste.
   stopAll();
   const staticDuration = playStatic();
-
-  const el = players[currentStation];
   syncToLive(currentStation);
-  const blessing = el.play();
-  if (blessing && blessing.catch) blessing.catch(() => {});
-  el.pause();
 
   if (pendingSwitch) clearTimeout(pendingSwitch);
   pendingSwitch = setTimeout(() => {
@@ -439,14 +446,25 @@ players.forEach((el, index) => {
   });
 });
 
-// Un seek vers une zone non "seekable" (seek rogné par le navigateur) ou une
-// grosse dérive laisseraient la lecture loin du direct : on vérifie au
-// démarrage de la lecture puis en continu. Tolérance large (10 s) : un retard
-// dû au buffering est inaudible pour une radio, alors que re-seeker trop tôt
-// jette le buffer en cours et peut empêcher indéfiniment le démarrage.
+// Vérification au démarrage réel de la lecture. Deux cas distincts :
+// - la lecture démarre À LA CIBLE du dernier seek (même après un long
+//   buffering, currentTime n'a pas bougé de la cible) → seek appliqué, on ne
+//   touche à rien : re-seeker sur simple retard de buffering jette le buffer
+//   et peut empêcher indéfiniment le démarrage ;
+// - la lecture démarre LOIN de la cible → le moteur a ignoré le seek posé en
+//   pause (WebKit/iOS) et a repris à l'ancienne position → on recale, cette
+//   fois en cours de lecture où les seeks fonctionnent partout.
 players.forEach((el, index) => {
   el.addEventListener('playing', () => {
-    if (index === currentStation) syncToLive(index, 10);
+    if (index !== currentStation) return;
+    const intended = seekIntents[index];
+    seekIntents[index] = null;
+    if (intended !== null && Math.abs(el.currentTime - intended) > 2.5) {
+      syncToLive(index);
+    } else {
+      // pas de seek en attente : simple garde-fou contre les grosses dérives
+      syncToLive(index, 10);
+    }
   });
 });
 
