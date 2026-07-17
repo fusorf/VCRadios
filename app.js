@@ -233,7 +233,10 @@ const setGlobalVolume = (val) => {
 };
 
 volumeToggle.addEventListener('click', () => {
-  volumeMenu.style.display = volumeMenu.style.display === 'none' ? 'flex' : 'none';
+  const opening = volumeMenu.style.display === 'none';
+  volumeMenu.style.display = opening ? 'flex' : 'none';
+  // nouveau quadrilatère à chaque ouverture, comme le reste de l'interface
+  if (opening) volumeMenu.style.clipPath = randomTilePoly();
 });
 
 volumeSlider.addEventListener('input', () => setGlobalVolume(volumeSlider.value / 100));
@@ -574,6 +577,14 @@ const backButton = document.getElementById('backButton');
 
 const pickerOpen = () => stationPicker.style.display !== 'none';
 
+// Quadrilatère irrégulier pour un élément d'interface : chaque coin est tiré
+// dans son propre angle, jusqu'à 14 % vers l'intérieur — même famille de
+// formes que le masque plein écran
+const randomTilePoly = () => {
+  const r = () => (Math.random() * 14).toFixed(1);
+  return `polygon(${r()}% ${r()}%, ${100 - r()}% ${r()}%, ${100 - r()}% ${100 - r()}%, ${r()}% ${100 - r()}%)`;
+};
+
 const startRadio = (index) => {
   started = true;
   currentStation = index;
@@ -638,16 +649,18 @@ backButton.addEventListener('click', () => {
 const hoverSfx = (e) => {
   if (e.pointerType === 'mouse') playUiSfx('hover');
 };
-backButton.addEventListener('pointerenter', hoverSfx);
-volumeToggle.addEventListener('pointerenter', hoverSfx);
 
-// Quadrilatère irrégulier pour une tuile : chaque coin est tiré dans son
-// propre angle, jusqu'à 14 % vers l'intérieur — même famille de formes que
-// le masque plein écran
-const randomTilePoly = () => {
-  const r = () => (Math.random() * 14).toFixed(1);
-  return `polygon(${r()}% ${r()}%, ${100 - r()}% ${r()}%, ${100 - r()}% ${100 - r()}%, ${r()}% ${100 - r()}%)`;
+// Boutons retour et volume : même DA polygonale que les tuiles, avec morph
+// et son au survol
+backButton.style.clipPath = randomTilePoly();
+volumeToggle.style.clipPath = randomTilePoly();
+
+const morphControl = (e) => {
+  e.currentTarget.style.clipPath = randomTilePoly();
+  hoverSfx(e);
 };
+backButton.addEventListener('pointerenter', morphControl);
+volumeToggle.addEventListener('pointerenter', morphControl);
 
 const initPicker = () => {
   const grid = stationPicker.querySelector('.picker-grid');
