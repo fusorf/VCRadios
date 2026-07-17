@@ -128,6 +128,7 @@ const syncToLive = (index, tolerance = 1.5) => {
 // "suspended" avec un avertissement console.
 const AudioCtx = window.AudioContext || window.webkitAudioContext;
 let audioCtx = null;
+let staticGain = null;
 const staticBuffers = [];
 let staticIndex = 0;
 
@@ -138,6 +139,9 @@ const staticFetches = STATIC_SOUNDS.map(url =>
 const initAudioCtx = () => {
   if (audioCtx || !AudioCtx) return;
   audioCtx = new AudioCtx();
+  staticGain = audioCtx.createGain();
+  staticGain.gain.value = globalVolume;
+  staticGain.connect(audioCtx.destination);
   staticFetches.forEach(p => p.then(data => {
     if (data) {
       audioCtx.decodeAudioData(data)
@@ -154,10 +158,57 @@ const playStatic = () => {
   staticIndex = (staticIndex + 1) % staticBuffers.length;
   const source = audioCtx.createBufferSource();
   source.buffer = staticBuffers[staticIndex];
-  source.connect(audioCtx.destination);
+  source.connect(staticGain);
   source.start();
   return source.buffer.duration;
 };
+
+// --- Contrôle du volume (même système que xeno-series-heardle) -------------
+let globalVolume = parseFloat(localStorage.getItem('globalVolume') ?? '1');
+if (!isFinite(globalVolume)) globalVolume = 1;
+
+const volumeSelector = document.getElementById('volumeSelector');
+const volumeToggle = document.getElementById('volumeToggle');
+const volumeMenu = document.getElementById('volumeMenu');
+const volumeValue = document.getElementById('volumeValue');
+const volumeSlider = document.getElementById('volumeSlider');
+
+const applyVolume = () => {
+  players.forEach(el => { el.volume = globalVolume; });
+  if (staticGain) staticGain.gain.value = globalVolume;
+};
+
+const updateVolumeIcon = () => {
+  volumeToggle.textContent = globalVolume === 0 ? '🔇' : globalVolume < 0.5 ? '🔈' : '🔊';
+};
+
+const setGlobalVolume = (val) => {
+  globalVolume = Math.max(0, Math.min(1, val));
+  try { localStorage.setItem('globalVolume', String(globalVolume)); } catch (e) {}
+  applyVolume();
+  updateVolumeIcon();
+  volumeValue.textContent = Math.round(globalVolume * 100) + '%';
+  volumeSlider.value = Math.round(globalVolume * 100);
+};
+
+volumeToggle.addEventListener('click', () => {
+  volumeMenu.style.display = volumeMenu.style.display === 'none' ? 'flex' : 'none';
+});
+
+volumeSlider.addEventListener('input', () => setGlobalVolume(volumeSlider.value / 100));
+
+// Fermeture du menu au clic en dehors
+document.addEventListener('click', (event) => {
+  if (!volumeSelector.contains(event.target)) volumeMenu.style.display = 'none';
+});
+
+// Molette sur le sélecteur
+volumeSelector.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  setGlobalVolume(globalVolume + (e.deltaY < 0 ? 0.05 : -0.05));
+}, { passive: false });
+
+setGlobalVolume(globalVolume);
 
 // --- Carrousel infini ------------------------------------------------------
 // Position virtuelle non bornée en "unités de station" : 9.0 == 0.0 visuel-

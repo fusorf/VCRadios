@@ -33,6 +33,13 @@
     </header>
     <div id="stationTitle"></div>
     <button id="playButton">Lancer la radio</button>
+    <div class="volume-selector" id="volumeSelector">
+      <button class="volume-toggle" id="volumeToggle">🔊</button>
+      <div class="volume-menu" id="volumeMenu" style="display: none;">
+        <span class="volume-value" id="volumeValue">100%</span>
+        <input type="range" class="volume-slider" id="volumeSlider" min="0" max="100" value="100" />
+      </div>
+    </div>
     <script src="app.js"></script>
     <script>
       if ('serviceWorker' in navigator) {

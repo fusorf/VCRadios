@@ -127,6 +127,105 @@ body {
   50% { opacity: 0.55; }
 }
 
+/* Contrôle du volume (repris de xeno-series-heardle, thème rose),
+   visible aussi sur mobile */
+.volume-selector {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 80;
+}
+
+.volume-toggle {
+  width: 40px;
+  height: 40px;
+  border: 2px solid rgba(249, 102, 173, 0.55);
+  background: rgba(15, 10, 18, 0.85);
+  color: #ffffff;
+  font-size: 1.2rem;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.volume-toggle:hover {
+  background: rgba(249, 102, 173, 0.2);
+  border-color: #f966ad;
+  box-shadow: 0 4px 15px rgba(249, 102, 173, 0.45);
+}
+
+.volume-menu {
+  position: absolute;
+  bottom: 50px;
+  right: 0;
+  z-index: 81;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  background: rgba(15, 10, 18, 0.92);
+  border: 1px solid rgba(249, 102, 173, 0.4);
+  border-radius: 10px;
+  padding: 14px 12px;
+}
+
+.volume-value {
+  font-family: 'Arborcrest', 'Arial', sans-serif;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #f966ad;
+  letter-spacing: 0.5px;
+}
+
+.volume-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  writing-mode: vertical-lr;
+  direction: rtl;
+  width: 6px;
+  height: 120px;
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 3px;
+  outline: none;
+  cursor: pointer;
+}
+
+.volume-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  background: #f966ad;
+  border-radius: 50%;
+  cursor: pointer;
+  box-shadow: 0 0 6px rgba(249, 102, 173, 0.5);
+  transition: box-shadow 0.2s;
+}
+
+.volume-slider::-webkit-slider-thumb:hover {
+  box-shadow: 0 0 12px rgba(249, 102, 173, 0.8);
+}
+
+.volume-slider::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  background: #f966ad;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  box-shadow: 0 0 6px rgba(249, 102, 173, 0.5);
+}
+
+.volume-slider::-moz-range-track {
+  width: 6px;
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 3px;
+  border: none;
+}
+
 /* Carrousel des stations : pages empilées, positionnées en JS (translateX) */
 .station-carousel {
   position: absolute;
