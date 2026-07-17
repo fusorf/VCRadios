@@ -136,6 +136,19 @@ const staticFetches = STATIC_SOUNDS.map(url =>
   fetch(url).then(r => r.arrayBuffer()).catch(() => null)
 );
 
+// SFX d'interface (menu GTA) : deux variantes par action, tirage aléatoire
+const UI_SOUNDS = {
+  hover: ['sfx/ui/hover1.mp3', 'sfx/ui/hover2.mp3'],
+  select: ['sfx/ui/select1.mp3', 'sfx/ui/select2.mp3'],
+  cancel: ['sfx/ui/cancel1.mp3', 'sfx/ui/cancel2.mp3']
+};
+const uiBuffers = { hover: [], select: [], cancel: [] };
+const uiFetches = Object.entries(UI_SOUNDS).flatMap(([kind, urls]) =>
+  urls.map(url =>
+    fetch(url).then(r => r.arrayBuffer()).then(data => ({ kind, data })).catch(() => null)
+  )
+);
+
 const initAudioCtx = () => {
   if (audioCtx || !AudioCtx) return;
   audioCtx = new AudioCtx();
@@ -149,6 +162,24 @@ const initAudioCtx = () => {
         .catch(() => {});
     }
   }));
+  uiFetches.forEach(p => p.then(item => {
+    if (item) {
+      audioCtx.decodeAudioData(item.data)
+        .then(buffer => uiBuffers[item.kind].push(buffer))
+        .catch(() => {});
+    }
+  }));
+};
+
+const playUiSfx = (kind) => {
+  if (!audioCtx) return;
+  const list = uiBuffers[kind];
+  if (list.length === 0) return;
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+  const source = audioCtx.createBufferSource();
+  source.buffer = list[Math.floor(Math.random() * list.length)];
+  source.connect(staticGain);
+  source.start();
 };
 
 // Joue un static et renvoie sa durée en secondes
@@ -567,9 +598,11 @@ const pickStation = (index) => {
   stationPicker.style.display = 'none';
   backButton.style.display = 'flex';
   if (!started) {
-    startRadio(index);
+    startRadio(index); // crée l'AudioContext dans le geste, avant le sfx
+    playUiSfx('select');
     return;
   }
+  playUiSfx('select');
   // la radio n'a jamais été coupée : on rouvre la fenêtre, et on ne switche
   // que si une autre station a été choisie
   if (index !== currentStation) {
@@ -583,10 +616,19 @@ const pickStation = (index) => {
 };
 
 backButton.addEventListener('click', () => {
+  playUiSfx('cancel');
   backButton.style.display = 'none';
   stationPicker.style.display = 'flex';
   closeMask();
 });
+
+// Sons de survol (souris uniquement : au tactile, pointerenter accompagne le
+// tap et doublonnerait avec select)
+const hoverSfx = (e) => {
+  if (e.pointerType === 'mouse') playUiSfx('hover');
+};
+backButton.addEventListener('pointerenter', hoverSfx);
+volumeToggle.addEventListener('pointerenter', hoverSfx);
 
 // Quadrilatère irrégulier pour une tuile : chaque coin est tiré dans son
 // propre angle, jusqu'à 14 % vers l'intérieur — même famille de formes que
@@ -607,8 +649,9 @@ const initPicker = () => {
     img.alt = station.name;
     tile.appendChild(img);
     // le polygone se re-déforme à chaque survol (morph animé en CSS)
-    tile.addEventListener('pointerenter', () => {
+    tile.addEventListener('pointerenter', (e) => {
       tile.style.clipPath = randomTilePoly();
+      hoverSfx(e);
     });
     tile.addEventListener('click', () => pickStation(index));
     grid.appendChild(tile);
