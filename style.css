@@ -1,42 +1,34 @@
+/* Polices */
+@font-face {
+  font-family: 'Pricedown';
+  src: url('fonts/Pricedown Bl.otf') format('opentype');
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Arborcrest';
+  src: url('fonts/SF Arborcrest Medium.ttf') format('truetype');
+  font-display: swap;
+}
+
 /* Général */
 body {
   margin: 0;
-  background: linear-gradient(135deg, #1a0033, #ff0099);
-  font-family: 'Arial', sans-serif;
+  background: #000;
   overflow: hidden;
   height: 100vh;
   height: 100dvh;
 }
 
-/* Scanlines */
-.scanlines {
-  pointer-events: none;
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background-image: repeating-linear-gradient(
-    to bottom,
-    rgba(0, 0, 0, 0.2) 0,
-    rgba(0, 0, 0, 0.2) 1px,
-    transparent 1px,
-    transparent 3px
-  );
-  z-index: 100;
-}
-
-/* Conteneur */
+/* Conteneur : fond texturé façon menu pause VC, héberge le carrousel */
 .container {
   position: fixed;
   top: 0;
   left: 0;
   width: 100%;
   height: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
+  background: #46414f url('logos/background.png');
+  background-size: 680px;
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
@@ -47,32 +39,92 @@ body {
   cursor: grabbing;
 }
 
-/* Bouton Play */
+/* Masque polygonal : noir partout, fenêtre irrégulière au centre */
+#maskOverlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 50;
+  pointer-events: none;
+}
+
+#maskPath {
+  fill: #000;
+}
+
+/* HUD : logo Vice City à gauche, wordmark Pricedown à droite de l'écran,
+   alignés sur la même ligne */
+.hud {
+  position: fixed;
+  top: 44px;
+  left: 20px;
+  right: 24px;
+  z-index: 60;
+  pointer-events: none;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.vc-logo {
+  width: clamp(150px, 24vw, 300px);
+  height: auto;
+}
+
+.wordmark {
+  margin: 0;
+  font-family: 'Pricedown', 'Arial', sans-serif;
+  font-weight: normal;
+  font-size: clamp(1.2rem, 3.4vw, 2.1rem);
+  letter-spacing: 1px;
+  color: #f966ad;
+  text-shadow: 4px 4px 0 #000;
+}
+
+/* Titre de la station courante, en haut au centre */
+#stationTitle {
+  position: fixed;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 60;
+  pointer-events: none;
+  font-family: 'Arborcrest', 'Arial', sans-serif;
+  font-size: clamp(1.1rem, 3vw, 1.9rem);
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: #7fd6f2;
+  text-shadow: 3px 3px 0 rgba(0, 0, 0, 0.85);
+  white-space: nowrap;
+}
+
+/* Bouton de lancement */
 #playButton {
-  font-size: 2rem;
-  padding: 1.2rem 2.5rem;
-  background: transparent;
-  color: #00ffff;
-  border: 2px solid #00ffff;
-  border-radius: 8px;
-  text-shadow: 0 0 8px #ff00cc;
-  cursor: pointer;
-  animation: pulse 1.5s infinite;
-  font-family: 'Courier New', monospace;
-  z-index: 10;
-  position: absolute;
+  position: fixed;
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
+  z-index: 70;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-family: 'Pricedown', 'Arial', sans-serif;
+  font-size: clamp(2.2rem, 7vw, 3.6rem);
+  color: #f966ad;
+  text-shadow: 5px 5px 0 #000;
+  animation: btnPulse 1.6s ease-in-out infinite;
 }
 
 #playButton:hover {
-  background: rgba(255, 255, 255, 0.05);
+  color: #ffffff;
 }
 
-@keyframes pulse {
-  0%, 100% { box-shadow: 0 0 10px #ff00cc; }
-  50% { box-shadow: 0 0 20px #00ffff; }
+@keyframes btnPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
 }
 
 /* Carrousel des stations : pages empilées, positionnées en JS (translateX) */
@@ -102,8 +154,8 @@ body {
 }
 
 .station-page img {
-  max-width: 60%;
-  max-height: 205px;
+  max-width: 46%;
+  max-height: 200px;
   object-fit: contain;
   transform: translateY(20px);
   opacity: 0;

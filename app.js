@@ -225,6 +225,64 @@ const step = (direction) => {
   goTo(Math.round(carouselTarget) + direction);
 };
 
+// --- Masque polygonal ------------------------------------------------------
+// Quadrilatère irrégulier : un point aléatoire par quart d'écran (ni trop
+// près du bord, ni trop près du centre), en coordonnées viewBox 0-100.
+// Le chemin evenodd = rectangle plein écran noir percé du quadrilatère.
+// À chaque changement de station, nouveaux points et interpolation.
+const maskPath = document.getElementById('maskPath');
+const stationTitle = document.getElementById('stationTitle');
+
+const rand = (a, b) => a + Math.random() * (b - a);
+
+const randomMaskPoints = () => [
+  { x: rand(6, 28), y: rand(10, 32) }, // haut gauche
+  { x: rand(72, 94), y: rand(10, 32) }, // haut droit
+  { x: rand(72, 94), y: rand(68, 90) }, // bas droit
+  { x: rand(6, 28), y: rand(68, 90) }  // bas gauche
+];
+
+// Masque fermé (les 4 points au centre) avant le lancement
+let maskPoints = [{ x: 50, y: 50 }, { x: 50, y: 50 }, { x: 50, y: 50 }, { x: 50, y: 50 }];
+let maskFrom = maskPoints;
+let maskTo = maskPoints;
+let maskAnimStart = 0;
+let maskRaf = null;
+const MASK_DURATION = 700;
+
+const renderMask = (pts) => {
+  const quad = pts
+    .map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(2)} ${p.y.toFixed(2)}`)
+    .join(' ');
+  maskPath.setAttribute('d', `M0 0 H100 V100 H0 Z ${quad} Z`);
+};
+
+const easeInOutCubic = t => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+
+const animateMask = (now) => {
+  const t = Math.min(1, (now - maskAnimStart) / MASK_DURATION);
+  const e = easeInOutCubic(t);
+  maskPoints = maskFrom.map((p, i) => ({
+    x: p.x + (maskTo[i].x - p.x) * e,
+    y: p.y + (maskTo[i].y - p.y) * e
+  }));
+  renderMask(maskPoints);
+  maskRaf = t < 1 ? requestAnimationFrame(animateMask) : null;
+};
+
+const retargetMask = () => {
+  maskFrom = maskPoints.map(p => ({ ...p }));
+  maskTo = randomMaskPoints();
+  maskAnimStart = performance.now();
+  if (maskRaf === null) maskRaf = requestAnimationFrame(animateMask);
+};
+
+renderMask(maskPoints);
+
+const updateStationTitle = () => {
+  stationTitle.textContent = stations[currentStation].name;
+};
+
 // --- Drag unifié tactile + souris (Pointer Events) -------------------------
 let dragStartX = 0;
 let dragStartPos = 0;
@@ -360,6 +418,8 @@ const setStation = (index) => {
   try { localStorage.setItem('vcr-station', String(index)); } catch (e) {}
 
   updateMediaSessionMetadata();
+  updateStationTitle();
+  retargetMask();
 
   // Coupure immédiate, static seul, puis la nouvelle station démarre à la fin
   // du static. Le seek pendant le static remplit le buffer au bon endroit.
@@ -391,6 +451,8 @@ playButton.addEventListener('click', () => {
   started = true;
   playButton.style.display = 'none';
   logoContainer.classList.remove('hidden');
+  updateStationTitle();
+  retargetMask();
 
   initAudioCtx();
   if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();

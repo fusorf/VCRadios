@@ -7,6 +7,8 @@
     <!-- Connexion TLS vers le Worker audio établie dès le chargement
          (gagne ~300-600 ms sur le démarrage audio mobile) -->
     <link rel="preconnect" href="https://vcradios-audio.fusorf.workers.dev" />
+    <link rel="preload" href="fonts/Pricedown%20Bl.otf" as="font" type="font/otf" crossorigin />
+    <link rel="preload" href="fonts/SF%20Arborcrest%20Medium.ttf" as="font" type="font/ttf" crossorigin />
     <link rel="stylesheet" href="style.css" />
     <meta name="theme-color" content="#ff0099" />
     <link rel="icon" href="./favicon.ico" type="image/x-icon" />
@@ -19,10 +21,18 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   </head>
   <body>
-    <div class="scanlines"></div>
-    <div class="container">
-      <button id="playButton">▶ LANCER LA RADIO</button>
-    </div>
+    <div class="container"></div>
+    <!-- Masque : noir plein écran percé d'un quadrilatère irrégulier (evenodd),
+         points animés en JS à chaque changement de station -->
+    <svg id="maskOverlay" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+      <path id="maskPath" fill-rule="evenodd" d="M0 0 H100 V100 H0 Z" />
+    </svg>
+    <header class="hud">
+      <img class="vc-logo" src="logos/logoVC.png" alt="Vice City" />
+      <h1 class="wordmark">Vice City Radios</h1>
+    </header>
+    <div id="stationTitle"></div>
+    <button id="playButton">Lancer la radio</button>
     <script src="app.js"></script>
     <script>
       if ('serviceWorker' in navigator) {

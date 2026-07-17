@@ -4,7 +4,7 @@
 // sur la racine du domaine et cassaient l'installation).
 // Les radios streament directement depuis R2 (Range natif + CDN) et ne sont
 // volontairement PAS interceptées ni mises en cache ici.
-const CACHE_VERSION = 'v4';
+const CACHE_VERSION = 'v5';
 const STATIC_CACHE = 'static-' + CACHE_VERSION;
 const IMAGE_CACHE = 'images-cache';
 
@@ -26,6 +26,10 @@ const PRECACHE_FILES = [
   './sfx/static10.mp3',
   './sfx/static11.mp3',
   './sfx/static12.mp3',
+  './fonts/Pricedown Bl.otf',
+  './fonts/SF Arborcrest Medium.ttf',
+  './logos/background.png',
+  './logos/logoVC.png',
   './logos/Emotion98.3-GTAVC-Logo.webp',
   './logos/RadioEspantoso-GTAVC-Logo.webp',
   './logos/Fever_105.webp',
