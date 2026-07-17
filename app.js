@@ -1,3 +1,16 @@
+// ---------------------------------------------------------------------------
+// Vice City Radio
+// Un élément <audio> persistant par station (le switch ne recharge jamais de
+// src), statics joués via Web Audio (latence ~0), position "live" calculée
+// sur une horloge murale commune. Carrousel infini piloté au drag
+// (tactile + souris) avec bouclage circulaire dans le sens du geste.
+// ---------------------------------------------------------------------------
+
+// Fichiers radio servis depuis Cloudflare R2 (bucket "vicecity"), même
+// principe que xeno-series-heardle. Les statics et logos restent locaux.
+// URL publique du bucket : R2 → vicecity → Settings → Public access.
+const AUDIO_BASE_URL = 'https://pub-78e65d92e7574926a519b54ecff12c87.r2.dev';
+
 const stations = [
   { name: "Emotion 98.3", file: "radio/EMOTION.mp3", logo: "logos/Emotion98.3-GTAVC-Logo.webp" },
   { name: "Radio Espantoso", file: "radio/ESPANT.mp3", logo: "logos/RadioEspantoso-GTAVC-Logo.webp" },
@@ -10,417 +23,449 @@ const stations = [
   { name: "Wildstyle", file: "radio/WILD.mp3", logo: "logos/WildstylePirateRadio.webp" }
 ];
 
-// Static transition sounds
-const staticSounds = [
+const STATIC_SOUNDS = [
   "sfx/static1.mp3", "sfx/static2.mp3", "sfx/static3.mp3", "sfx/static4.mp3",
   "sfx/static5.mp3", "sfx/static6.mp3", "sfx/static7.mp3", "sfx/static8.mp3",
   "sfx/static9.mp3", "sfx/static10.mp3", "sfx/static11.mp3", "sfx/static12.mp3"
 ];
 
-// Initialize all stations with start time NOW
-const appStartTime = Date.now();
+const mod = (n, m) => ((n % m) + m) % m;
 
-// Add runtime data to each station
-stations.forEach(s => {
-  s.startTime = appStartTime;
-  s.initialOffset = 0;
-  s.duration = null;
-  s.lastKnownTime = 0;
-  s._durationKnown = false;
-  s._preloading = false;
-  s._preloaded = false;
-});
+const stationUrl = (station) => `${AUDIO_BASE_URL}/${station.file}`;
 
-// DOM references
-let currentStation = 0;
-let lastSwitchTime = null;
-let isTransitioning = false;
-let previousStationIndex = -1;
+// --- Modèle radio "en direct" ----------------------------------------------
+// Chaque station avance sur une horloge murale depuis EPOCH, plus un décalage
+// aléatoire par station persisté en localStorage : la position est donc
+// continue entre les switchs, les rechargements et les sessions, comme une
+// vraie radio qui émet en permanence.
+const EPOCH = Date.UTC(2026, 0, 1);
 
-const audio = document.getElementById('audio-player');
-const playButton = document.getElementById('playButton');
+const loadOffsets = () => {
+  try {
+    const saved = JSON.parse(localStorage.getItem('vcr-offsets'));
+    if (Array.isArray(saved) && saved.length === stations.length) return saved;
+  } catch (e) { /* localStorage indisponible ou corrompu */ }
+  const fresh = stations.map(() => Math.floor(Math.random() * 86400));
+  try { localStorage.setItem('vcr-offsets', JSON.stringify(fresh)); } catch (e) {}
+  return fresh;
+};
+const offsets = loadOffsets();
+
+const loadLastStation = () => {
+  const saved = Number(localStorage.getItem('vcr-station'));
+  return Number.isInteger(saved) && saved >= 0 && saved < stations.length ? saved : 0;
+};
+
+// --- État ------------------------------------------------------------------
+let currentStation = loadLastStation();
+let audioUnlocked = false;
+let pendingSwitch = null;
+
 const container = document.querySelector('.container');
+
 const logoContainer = document.createElement('div');
-logoContainer.classList.add('station-carousel', 'hidden');
+logoContainer.classList.add('station-carousel');
 container.appendChild(logoContainer);
 
-// Preload strategy: load metadata for all, then progressively cache audio files
-const preloadDurations = () => {
-  stations.forEach((station, index) => {
-    const tempAudio = new Audio();
-    tempAudio.src = station.file;
-    tempAudio.preload = 'metadata';
-    tempAudio.addEventListener('loadedmetadata', () => {
-      station.duration = tempAudio.duration;
-      station.initialOffset = Math.random() * station.duration;
-      station._durationKnown = true;
-      console.log(`[METADATA] Station ${index} (${station.name}): ${station.duration.toFixed(2)}s`);
-    });
-  });
+// --- Pool d'éléments audio (un par station, jamais rechargés) --------------
+const audioPool = document.createElement('div');
+audioPool.style.display = 'none';
+document.body.appendChild(audioPool);
+
+const players = stations.map(station => {
+  const el = document.createElement('audio');
+  el.preload = 'metadata';
+  el.loop = true;
+  el.src = stationUrl(station);
+  audioPool.appendChild(el);
+  return el;
+});
+
+const livePosition = (index) => {
+  const duration = players[index].duration;
+  if (!isFinite(duration) || duration <= 0) return null;
+  const elapsed = (Date.now() - EPOCH) / 1000 + offsets[index];
+  return mod(elapsed, duration);
 };
 
-// Progressive station preloading via Service Worker
-const progressivePreload = () => {
-  if (!('serviceWorker' in navigator)) return;
-  
-  // Preload current station first
-  preloadStationInBackground(currentStation);
-  
-  // Then preload adjacent stations
-  setTimeout(() => {
-    const next = (currentStation + 1) % stations.length;
-    const prev = (currentStation - 1 + stations.length) % stations.length;
-    preloadStationInBackground(next);
-    preloadStationInBackground(prev);
-  }, 2000);
-  
-  // Finally, preload remaining stations in the background over time
-  setTimeout(() => {
-    stations.forEach((station, index) => {
-      if (!station._preloaded && index !== currentStation) {
-        setTimeout(() => preloadStationInBackground(index), index * 5000);
-      }
-    });
-  }, 10000);
+// Recale un lecteur sur sa position "live". Distance circulaire : au moment où
+// le fichier boucle, currentTime et la position live sont aux deux extrémités
+// du fichier sans être réellement désynchronisés.
+const syncToLive = (index, tolerance = 1.5) => {
+  const el = players[index];
+  const pos = livePosition(index);
+  if (pos === null) return false;
+  const delta = Math.abs(el.currentTime - pos);
+  const drift = Math.min(delta, el.duration - delta);
+  if (drift > tolerance) el.currentTime = pos;
+  return true;
 };
 
-const preloadStationInBackground = (stationIndex) => {
-  const station = stations[stationIndex];
-  if (station._preloading || station._preloaded) return;
-  
-  station._preloading = true;
-  console.log(`[PRELOAD] Background caching station ${stationIndex} (${station.name})`);
-  
-  if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
-    navigator.serviceWorker.controller.postMessage({
-      type: 'PRELOAD_STATION',
-      url: station.file
-    });
-  }
-  
-  // Also trigger browser preload
-  const preloadLink = document.createElement('link');
-  preloadLink.rel = 'prefetch';
-  preloadLink.href = station.file;
-  preloadLink.as = 'audio';
-  document.head.appendChild(preloadLink);
-  
-  station._preloaded = true;
-  station._preloading = false;
+// --- Statics via Web Audio (décodés une fois, déclenchement instantané) ----
+// Les fichiers sont téléchargés dès le chargement, mais l'AudioContext n'est
+// créé qu'au premier geste : instancié avant interaction, il démarrerait
+// "suspended" avec un avertissement console.
+const AudioCtx = window.AudioContext || window.webkitAudioContext;
+let audioCtx = null;
+const staticBuffers = [];
+let staticIndex = 0;
+
+const staticFetches = STATIC_SOUNDS.map(url =>
+  fetch(url).then(r => r.arrayBuffer()).catch(() => null)
+);
+
+const initAudioCtx = () => {
+  if (audioCtx || !AudioCtx) return;
+  audioCtx = new AudioCtx();
+  staticFetches.forEach(p => p.then(data => {
+    if (data) {
+      audioCtx.decodeAudioData(data)
+        .then(buffer => staticBuffers.push(buffer))
+        .catch(() => {});
+    }
+  }));
 };
 
-preloadDurations();
+// Joue un static et renvoie sa durée en secondes
+const playStatic = () => {
+  if (!audioCtx || staticBuffers.length === 0) return 0.15;
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+  staticIndex = (staticIndex + 1) % staticBuffers.length;
+  const source = audioCtx.createBufferSource();
+  source.buffer = staticBuffers[staticIndex];
+  source.connect(audioCtx.destination);
+  source.start();
+  return source.buffer.duration;
+};
 
-// Initialize the station pages carousel
+// --- Carrousel infini ------------------------------------------------------
+// Position virtuelle non bornée en "unités de station" : 9.0 == 0.0 visuel-
+// lement (rendu modulo), donc avancer depuis la dernière station fait entrer
+// la première par le même côté, sans jamais rembobiner.
+let carouselPos = currentStation;   // position rendue (suit le doigt / l'easing)
+let carouselTarget = currentStation; // position visée
+let rafId = null;
+let dragging = false;
+let pages = [];
+
 const initCarousel = () => {
   logoContainer.innerHTML = '';
-  
-  stations.forEach((station, index) => {
+  pages = stations.map(station => {
     const page = document.createElement('div');
     page.classList.add('station-page');
-    page.dataset.index = index;
-    
     const img = document.createElement('img');
     img.src = station.logo;
     img.alt = station.name;
-    
     page.appendChild(img);
     logoContainer.appendChild(page);
+    return page;
   });
-  
-  updateCarouselPosition();
+  renderCarousel();
 };
 
-// Update carousel position to show current station
-const updateCarouselPosition = () => {
-  const pages = document.querySelectorAll('.station-page');
-  pages.forEach(page => {
-    const index = parseInt(page.dataset.index);
-    page.classList.toggle('active', index === currentStation);
-  });
-  
-  logoContainer.style.transform = `translateX(-${currentStation * 100}%)`;
-};
-
-// Variable to keep track of the current static sound index
-let currentStaticIndex = 0;
-
-// Get the next static sound file in order
-const getStaticSound = () => {
-  const soundFile = staticSounds[currentStaticIndex];
-  currentStaticIndex = (currentStaticIndex + 1) % staticSounds.length;
-  return soundFile;
-};
-
-// Update lock screen media session
-const updateMediaSession = (station) => {
-  if ('mediaSession' in navigator) {
-    navigator.mediaSession.metadata = new MediaMetadata({
-      title: station.name,
-      artist: 'Vice City Radio',
-      album: 'GTA Vice City',
-      artwork: [
-        { src: station.logo, sizes: '512x512', type: 'image/webp' }
-      ]
-    });
-    
-    navigator.mediaSession.setActionHandler('play', () => {
-      audio.play();
-    });
-    navigator.mediaSession.setActionHandler('pause', () => {
-      audio.pause();
-    });
-    navigator.mediaSession.setActionHandler('previoustrack', () => {
-      if (isTransitioning) return;
-      currentStation = (currentStation - 1 + stations.length) % stations.length;
-      updateStation();
-    });
-    navigator.mediaSession.setActionHandler('nexttrack', () => {
-      if (isTransitioning) return;
-      currentStation = (currentStation + 1) % stations.length;
-      updateStation();
-    });
-  }
-};
-
-// Update station with transition effect
-const updateStation = () => {
-  if (isTransitioning) return;
-  isTransitioning = true;
-
-  const now = Date.now();
-  const newStation = stations[currentStation];
-
-  // Pause and store current time of previous station
-  if (lastSwitchTime !== null && previousStationIndex !== -1) {
-    const prevStation = stations[previousStationIndex];
-    if (prevStation) {
-      const elapsed = (now - lastSwitchTime) / 1000;
-      prevStation.lastKnownTime += elapsed;
-      prevStation.lastKnownTime %= prevStation.duration || Infinity;
+const renderCarousel = () => {
+  const base = mod(carouselPos, stations.length);
+  pages.forEach((page, index) => {
+    let delta = index - base;
+    if (delta > stations.length / 2) delta -= stations.length;
+    if (delta < -stations.length / 2) delta += stations.length;
+    if (Math.abs(delta) > 1.5) {
+      page.style.visibility = 'hidden';
+    } else {
+      page.style.visibility = 'visible';
+      const scale = 1 - 0.15 * Math.min(1, Math.abs(delta));
+      page.style.transform = `translateX(${delta * 100}%) scale(${scale})`;
     }
-  }
-
-  // Update carousel position
-  updateCarouselPosition();
-  
-  // Update Media Session for lock screen
-  updateMediaSession(newStation);
-
-  // Update switch time
-  lastSwitchTime = now;
-  
-  const staticMuteDelay = 50;
-  const staticUnmuteDelay = 50;
-
-  // Save current volume
-  const originalVolume = audio.volume;
-
-  // Mute previous station
-  setTimeout(() => {
-    audio.pause();
-    audio.volume = 0;
-  }, staticMuteDelay);
-
-  // Create and play static transition sound
-  const staticEffect = new Audio(getStaticSound());
-  staticEffect.volume = 1.0;
-
-  staticEffect.addEventListener('loadedmetadata', () => {
-    const staticDurationMs = staticEffect.duration * 1000;
-    const delayBeforeUnmute = Math.max(0, staticDurationMs - staticUnmuteDelay);
-    setTimeout(prepareAndPlayNextStation, delayBeforeUnmute);
   });
+};
 
-  staticEffect.addEventListener('error', () => {
-    console.error('Error loading static sound metadata or playing.');
-    setTimeout(prepareAndPlayNextStation, 100);
-  });
-
-  const staticPlayPromise = staticEffect.play();
-  if (staticPlayPromise) {
-    staticPlayPromise.catch(error => {
-      console.error('Static sound play error:', error);
-      setTimeout(prepareAndPlayNextStation, 100);
-    });
+const animateCarousel = () => {
+  const diff = carouselTarget - carouselPos;
+  if (!dragging && Math.abs(diff) < 0.001) {
+    carouselPos = carouselTarget;
+    renderCarousel();
+    rafId = null;
+    return;
   }
+  if (!dragging) carouselPos += diff * 0.18;
+  renderCarousel();
+  rafId = requestAnimationFrame(animateCarousel);
+};
 
-  function prepareAndPlayNextStation() {
-    const station = stations[currentStation];
-    
-    // Calculate current playback time
-    const nowAfterTransition = Date.now();
-    const elapsed = (nowAfterTransition - station.startTime) / 1000;
-    const playTime = station.duration ? (station.initialOffset + elapsed) % station.duration : 0;
-    
-    // Set source and time on main audio
-    audio.src = station.file;
-    audio.currentTime = playTime;
-    audio.loop = true;
-    audio.volume = originalVolume;
-    
-    // Play the station
-    const playPromise = audio.play();
-    if (playPromise) {
-      playPromise.catch(error => {
-        console.error('Station play error:', error);
-        setTimeout(() => audio.play(), 50);
+const startCarouselAnim = () => {
+  if (rafId === null) rafId = requestAnimationFrame(animateCarousel);
+};
+
+// Vise une position (entière) du carrousel et déclenche l'audio si la station
+// d'arrivée change
+const goTo = (target) => {
+  carouselTarget = target;
+  startCarouselAnim();
+  const index = mod(Math.round(target), stations.length);
+  if (index !== currentStation) setStation(index);
+};
+
+// Avance d'un cran dans une direction (flèches, media session) : la cible non
+// bornée garantit le bouclage dans le même sens
+const step = (direction) => {
+  goTo(Math.round(carouselTarget) + direction);
+};
+
+// --- Drag unifié tactile + souris (Pointer Events) -------------------------
+let dragStartX = 0;
+let dragStartPos = 0;
+let dragLastX = 0;
+let dragLastT = 0;
+let dragVelocity = 0; // px/ms lissée
+
+container.addEventListener('pointerdown', e => {
+  dragging = true;
+  container.setPointerCapture(e.pointerId);
+  container.classList.add('dragging');
+  dragStartX = e.clientX;
+  dragStartPos = carouselPos;
+  dragLastX = e.clientX;
+  dragLastT = performance.now();
+  dragVelocity = 0;
+  if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
+});
+
+container.addEventListener('pointermove', e => {
+  if (!dragging) return;
+  const now = performance.now();
+  const dt = now - dragLastT;
+  if (dt > 0) dragVelocity = dragVelocity * 0.8 + ((e.clientX - dragLastX) / dt) * 0.2;
+  dragLastX = e.clientX;
+  dragLastT = now;
+  carouselPos = dragStartPos + (dragStartX - e.clientX) / container.clientWidth;
+  renderCarousel();
+});
+
+const endDrag = () => {
+  if (!dragging) return;
+  dragging = false;
+  container.classList.remove('dragging');
+  // vélocité en stations/s, positive vers la station suivante
+  const flick = -dragVelocity * 1000 / container.clientWidth;
+  let target;
+  if (Math.abs(flick) > 1.5) {
+    target = flick > 0 ? Math.floor(carouselPos) + 1 : Math.ceil(carouselPos) - 1;
+  } else {
+    target = Math.round(carouselPos);
+  }
+  goTo(target);
+};
+
+container.addEventListener('pointerup', endDrag);
+container.addEventListener('pointercancel', endDrag);
+
+// --- Media Session (écran de verrouillage) ---------------------------------
+const updateMediaSessionMetadata = () => {
+  if (!('mediaSession' in navigator)) return;
+  const station = stations[currentStation];
+  const isSvg = station.logo.endsWith('.svg');
+  navigator.mediaSession.metadata = new MediaMetadata({
+    title: station.name,
+    artist: 'Vice City Radio',
+    album: 'GTA Vice City',
+    artwork: [
+      isSvg
+        ? { src: station.logo, sizes: 'any', type: 'image/svg+xml' }
+        : { src: station.logo, type: 'image/webp' }
+    ]
+  });
+};
+
+const setupMediaSession = () => {
+  if (!('mediaSession' in navigator)) return;
+  // "play" resynchronise sur la position live : une radio n'est jamais en pause
+  navigator.mediaSession.setActionHandler('play', () => playStation(currentStation));
+  navigator.mediaSession.setActionHandler('pause', () => players[currentStation].pause());
+  navigator.mediaSession.setActionHandler('previoustrack', () => step(-1));
+  navigator.mediaSession.setActionHandler('nexttrack', () => step(1));
+};
+
+// --- Préchargement complet via Service Worker ------------------------------
+const canPreloadHeavy = () => {
+  const conn = navigator.connection;
+  if (!conn) return true;
+  return !conn.saveData && !/(^|-)2g$/.test(conn.effectiveType || '');
+};
+
+const requestFullPreload = (index) => {
+  const station = stations[index];
+  if (station.preloaded || !('serviceWorker' in navigator) || !canPreloadHeavy()) return;
+  navigator.serviceWorker.ready.then(reg => {
+    if (reg.active) {
+      reg.active.postMessage({
+        type: 'PRELOAD_STATION',
+        url: stationUrl(station)
       });
     }
-    
-    console.log(`[TRANSITION] Playing station ${currentStation} (${station.name}) at ${playTime.toFixed(2)}s`);
-
-    // Preload adjacent stations for next switch
-    const next = (currentStation + 1) % stations.length;
-    const prev = (currentStation - 1 + stations.length) % stations.length;
-    preloadStationInBackground(next);
-    preloadStationInBackground(prev);
-
-    // Reset state
-    isTransitioning = false;
-  }
+  }).catch(() => {});
 };
 
-// Initial play without static transition
-const initialPlay = () => {
-  const now = Date.now();
-  const station = stations[currentStation];
-  
-  // Calculate playback start time
-  const elapsed = (now - station.startTime) / 1000;
-  const playTime = station.duration ? (station.initialOffset + elapsed) % station.duration : 0;
-  
-  // Update Media Session
-  updateMediaSession(station);
-  
-  // Set up audio
-  audio.src = station.file;
-  audio.currentTime = playTime;
-  audio.loop = true;
-  
-  // Play audio
-  const playPromise = audio.play();
-  if (playPromise) {
-    playPromise.catch(error => {
-      console.error('Initial play error:', error);
-      setTimeout(() => audio.play(), 100);
-    });
-  }
-  
-  // Update switch time
-  lastSwitchTime = now;
-  
-  console.log(`[INITIAL] Playing station ${currentStation} (${station.name}) at ${playTime.toFixed(2)}s`);
-  
-  // Start progressive preloading after initial play
-  progressivePreload();
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.addEventListener('message', event => {
+    const data = event.data;
+    if (!data || data.type !== 'STATION_PRELOADED' || !data.ok) return;
+    const station = stations.find(s => data.url === stationUrl(s));
+    if (station) station.preloaded = true;
+  });
+}
+
+const scheduleFullPreloads = () => {
+  const next = mod(currentStation + 1, stations.length);
+  const prev = mod(currentStation - 1, stations.length);
+  const order = [currentStation, next, prev];
+  stations.forEach((_, i) => { if (!order.includes(i)) order.push(i); });
+  order.forEach((index, rank) => {
+    setTimeout(() => requestFullPreload(index), 2000 + rank * 8000);
+  });
+  // Filet de sécurité : retente les stations manquées (le SW ignore celles déjà en cache)
+  setInterval(() => stations.forEach((_, i) => requestFullPreload(i)), 120000);
 };
 
-// Play button click
-playButton.addEventListener('click', () => {
-  playButton.style.display = 'none';
-  logoContainer.classList.remove('hidden');
-  
-  initCarousel();
-  
-  // Initial play inline
-  const now = Date.now();
-  const station = stations[currentStation];
-  
-  // Calculate playback start time
-  const elapsed = (now - station.startTime) / 1000;
-  const playTime = station.duration ? (station.initialOffset + elapsed) % station.duration : 0;
-  
-  // Update Media Session
-  updateMediaSession(station);
-  
-  // Set up audio
-  audio.src = station.file;
-  audio.currentTime = playTime;
-  audio.loop = true;
-  
-  // Play audio
-  const playPromise = audio.play();
-  if (playPromise) {
-    playPromise.catch(error => {
-      console.error('Initial play error:', error);
-      setTimeout(() => audio.play(), 100);
-    });
+// --- Lecture ---------------------------------------------------------------
+// Prépare les stations adjacentes : le navigateur bufferise autour de leur
+// position live, le prochain switch part donc d'une zone déjà chargée.
+const warmNeighbors = () => {
+  const next = mod(currentStation + 1, stations.length);
+  const prev = mod(currentStation - 1, stations.length);
+  [next, prev].forEach(index => {
+    const el = players[index];
+    el.preload = 'auto';
+    if (el.paused) syncToLive(index);
+  });
+  requestFullPreload(next);
+  requestFullPreload(prev);
+};
+
+const playStation = (index) => {
+  const el = players[index];
+  if (!syncToLive(index)) {
+    el.addEventListener('loadedmetadata', () => {
+      if (index === currentStation) syncToLive(index);
+    }, { once: true });
   }
-  
-  // Update switch time
-  lastSwitchTime = now;
-  
-  console.log(`[INITIAL] Playing station ${currentStation} (${station.name}) at ${playTime.toFixed(2)}s`);
-  
-  // Start progressive preloading after initial play
-  progressivePreload();
-});
+  el.play().catch(() => {});
+  warmNeighbors();
+};
 
-// Handle end of track for iOS loop issue
-audio.addEventListener('ended', () => {
-  console.log('Track ended, restarting...');
-  audio.currentTime = 0;
-  audio.play();
-});
+const stopAll = () => {
+  players.forEach(el => { if (!el.paused) el.pause(); });
+};
 
-// Swipe support for mobile
-let startX = null;
-let startY = null;
-let initialTouch = false;
+const setStation = (index) => {
+  currentStation = index;
+  try { localStorage.setItem('vcr-station', String(index)); } catch (e) {}
 
-container.addEventListener('touchstart', e => {
-  if (isTransitioning) return;
-  startX = e.touches[0].clientX;
-  startY = e.touches[0].clientY;
-  initialTouch = true;
-});
+  updateMediaSessionMetadata();
 
-container.addEventListener('touchmove', e => {
-  if (!initialTouch || isTransitioning) return;
-  
-  const currentX = e.touches[0].clientX;
-  const currentY = e.touches[0].clientY;
-  
-  const deltaX = startX - currentX;
-  const deltaY = Math.abs(startY - currentY);
-  
-  if (Math.abs(deltaX) > deltaY && Math.abs(deltaX) > 5) {
-    e.preventDefault();
-  }
-});
+  // Coupure immédiate couverte par le static ; le zapping rapide reste fluide :
+  // chaque switch annule le démarrage en attente du précédent (debounce)
+  stopAll();
+  const staticDuration = playStatic();
+  if (pendingSwitch) clearTimeout(pendingSwitch);
+  pendingSwitch = setTimeout(() => {
+    pendingSwitch = null;
+    playStation(currentStation);
+  }, Math.max(80, staticDuration * 1000 - 60));
+};
 
-container.addEventListener('touchend', e => {
-  if (!initialTouch || isTransitioning) return;
-  initialTouch = false;
-  
-  const endX = e.changedTouches[0].clientX;
-  const deltaX = startX - endX;
-  
-  if (Math.abs(deltaX) > 50) {
-    if (deltaX > 0) {
-      currentStation = (currentStation + 1) % stations.length;
-    } else {
-      currentStation = (currentStation - 1 + stations.length) % stations.length;
+// Débloque la lecture programmatique de tous les lecteurs pendant le geste
+// utilisateur (requis par iOS : un play() par élément dans le contexte du tap)
+const primePlayers = () => {
+  players.forEach((el, index) => {
+    if (index === currentStation) return;
+    el.muted = true;
+    const p = el.play();
+    if (p && p.then) {
+      p.then(() => {
+        el.muted = false;
+        // ne pas couper la station si l'utilisateur a switché dessus entre-temps
+        if (index !== currentStation) el.pause();
+      }).catch(() => { el.muted = false; });
     }
-    updateStation();
+  });
+};
+
+// --- Démarrage -------------------------------------------------------------
+// Page radio directe, sans bouton. L'autoplay avec son étant souvent bloqué
+// au premier chargement, on le tente quand même (PWA installée / engagement
+// élevé) et sinon la lecture démarre au premier geste, le carrousel étant
+// déjà utilisable.
+const unlockAudio = () => {
+  if (audioUnlocked) return;
+  audioUnlocked = true;
+  initAudioCtx();
+  if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+  primePlayers();
+  playStation(currentStation);
+  scheduleFullPreloads();
+  if (navigator.storage && navigator.storage.persist) {
+    navigator.storage.persist().catch(() => {});
   }
-  
-  startX = null;
-  startY = null;
+};
+
+initCarousel();
+setupMediaSession();
+updateMediaSessionMetadata();
+
+// Ne sonde l'autoplay que s'il a une chance d'aboutir : un play() refusé
+// laisse un avertissement console même quand le rejet est intercepté
+const autoplayPossible = typeof navigator.getAutoplayPolicy !== 'function'
+  || navigator.getAutoplayPolicy('mediaelement') === 'allowed';
+if (autoplayPossible) {
+  const autoplayProbe = players[currentStation].play();
+  if (autoplayProbe && autoplayProbe.then) {
+    autoplayProbe.then(() => unlockAudio()).catch(() => { /* attendre un geste */ });
+  }
+}
+
+document.addEventListener('pointerdown', unlockAudio, true);
+document.addEventListener('keydown', unlockAudio, true);
+
+// Resynchronise les stations voisines en pause pour que le prochain switch
+// tombe dans une zone déjà bufferisée
+setInterval(() => {
+  const next = mod(currentStation + 1, stations.length);
+  const prev = mod(currentStation - 1, stations.length);
+  [next, prev].forEach(index => { if (players[index].paused) syncToLive(index); });
+}, 15000);
+
+// Corrige la dérive après une mise en veille de l'onglet ou de l'appareil
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') return;
+  const el = players[currentStation];
+  if (!el.paused) syncToLive(currentStation);
 });
 
-// Keyboard nav
+// Filet de sécurité si loop déraille (vieux iOS) : repart sur la position live
+players.forEach((el, index) => {
+  el.addEventListener('ended', () => {
+    syncToLive(index);
+    el.play().catch(() => {});
+  });
+});
+
+// Un seek vers une zone non "seekable" (pas encore bufferisée, ou serveur sans
+// support Range) est rogné par le navigateur : la lecture partirait d'un point
+// quasi aléatoire. On vérifie donc la position dès que la lecture démarre puis
+// en continu, et on re-seek jusqu'à retomber sur le direct.
+players.forEach((el, index) => {
+  el.addEventListener('playing', () => {
+    if (index === currentStation) syncToLive(index, 3);
+  });
+});
+
+setInterval(() => {
+  const el = players[currentStation];
+  if (!el.paused) syncToLive(currentStation, 3);
+}, 4000);
+
+// --- Clavier ---------------------------------------------------------------
 document.addEventListener('keydown', e => {
-  if (logoContainer.classList.contains('hidden') || isTransitioning) return;
-  
-  if (e.key === 'ArrowRight') {
-    previousStationIndex = currentStation;
-    currentStation = (currentStation + 1) % stations.length;
-    updateStation();
-  } else if (e.key === 'ArrowLeft') {
-    previousStationIndex = currentStation;
-    currentStation = (currentStation - 1 + stations.length) % stations.length;
-    updateStation();
-  }
+  if (e.key === 'ArrowRight') step(1);
+  else if (e.key === 'ArrowLeft') step(-1);
 });
