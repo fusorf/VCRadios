@@ -40,16 +40,20 @@ const stationUrl = (station) => `${AUDIO_BASE_URL}/${station.file}`;
 // vraie radio qui émet en permanence.
 const EPOCH = Date.UTC(2026, 0, 1);
 
-const loadOffsets = () => {
-  try {
-    const saved = JSON.parse(localStorage.getItem('vcr-offsets'));
-    if (Array.isArray(saved) && saved.length === stations.length) return saved;
-  } catch (e) { /* localStorage indisponible ou corrompu */ }
-  const fresh = stations.map(() => Math.floor(Math.random() * 86400));
-  try { localStorage.setItem('vcr-offsets', JSON.stringify(fresh)); } catch (e) {}
-  return fresh;
+// Décalage de départ par station, DÉTERMINISTE (hash du nom de fichier) :
+// identique sur tous les appareils, donc une même station joue exactement la
+// même chose partout au même moment, comme une vraie diffusion hertzienne.
+const stationOffset = (station) => {
+  let h = 0;
+  for (let i = 0; i < station.file.length; i++) {
+    h = (h * 31 + station.file.charCodeAt(i)) >>> 0;
+  }
+  return h % 86400;
 };
-const offsets = loadOffsets();
+const offsets = stations.map(stationOffset);
+
+// nettoyage des anciens offsets aléatoires par appareil
+try { localStorage.removeItem('vcr-offsets'); } catch (e) {}
 
 const loadLastStation = () => {
   const saved = Number(localStorage.getItem('vcr-station'));
