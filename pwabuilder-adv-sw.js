@@ -4,7 +4,7 @@
 // sur la racine du domaine et cassaient l'installation).
 // Les radios streament directement depuis R2 (Range natif + CDN) et ne sont
 // volontairement PAS interceptées ni mises en cache ici.
-const CACHE_VERSION = 'v8';
+const CACHE_VERSION = 'v9';
 const STATIC_CACHE = 'static-' + CACHE_VERSION;
 const IMAGE_CACHE = 'images-cache';
 
@@ -46,7 +46,16 @@ const PRECACHE_FILES = [
   './logos/ViceCityPublicRadio-GTAVC-Logo.svg',
   './logos/V-Rock-GTAVC-Logo.svg',
   './logos/Wave103-GTAVC-Logo.svg',
-  './logos/WildstylePirateRadio.webp'
+  './logos/WildstylePirateRadio.webp',
+  './logos/notif/EMOTION.png',
+  './logos/notif/ESPANT.png',
+  './logos/notif/FEVER.png',
+  './logos/notif/FLASH.png',
+  './logos/notif/KCHAT.png',
+  './logos/notif/VCPR.png',
+  './logos/notif/VROCK.png',
+  './logos/notif/WAVE.png',
+  './logos/notif/WILD.png'
 ];
 
 self.addEventListener('install', (event) => {

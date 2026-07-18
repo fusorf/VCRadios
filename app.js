@@ -397,18 +397,29 @@ const updateStationTitle = () => {
 };
 
 // Morceau en cours = dernière entrée de la tracklist dont le début est passé.
-// Avant le premier titre (intro/jingle DJ) ou sur une station parlée : rien.
-const updateTrackInfo = () => {
-  const el = players[currentStation];
+// Avant le premier titre (intro/jingle DJ) ou sur une station parlée : null.
+const currentTrack = () => {
   const list = STATION_TRACKS[stations[currentStation].file];
-  if (!list || el.paused) { trackInfo.textContent = ''; return; }
+  if (!list) return null;
   const pos = livePosition(currentStation);
-  if (pos === null) { trackInfo.textContent = ''; return; }
+  if (pos === null) return null;
   let current = null;
   for (const track of list) {
     if (track[0] <= pos) current = track; else break;
   }
-  trackInfo.textContent = current ? `${current[1]} — ${current[2]}` : '';
+  return current;
+};
+
+// Clé de l'artwork de notif (radio/EMOTION.mp3 -> EMOTION)
+const stationArtKey = (index) => stations[index].file.slice(6, -4);
+
+const updateTrackInfo = () => {
+  if (players[currentStation].paused) { trackInfo.textContent = ''; return; }
+  const track = currentTrack();
+  trackInfo.textContent = track ? `${track[1]} — ${track[2]}` : '';
+  // rafraîchit la notif quand le morceau change en cours de lecture
+  const key = currentStation + '|' + (track ? track[1] : '');
+  if (key !== lastMediaKey) updateMediaSessionMetadata();
 };
 
 // --- Drag unifié tactile + souris (Pointer Events) -------------------------
@@ -460,19 +471,24 @@ const endDrag = () => {
 container.addEventListener('pointerup', endDrag);
 container.addEventListener('pointercancel', endDrag);
 
-// --- Media Session (écran de verrouillage) ---------------------------------
+// --- Media Session (écran de verrouillage / notification) ------------------
+// Affiche le morceau en cours (titre + artiste) et la station, avec le logo
+// standardisé en PNG. Titre de station en repli pendant les intros DJ ou sur
+// les stations parlées (K-Chat, VCPR).
+let lastMediaKey = '';
 const updateMediaSessionMetadata = () => {
   if (!('mediaSession' in navigator)) return;
   const station = stations[currentStation];
-  const isSvg = station.logo.endsWith('.svg');
+  const track = currentTrack();
+  lastMediaKey = currentStation + '|' + (track ? track[1] : '');
+  const art = `logos/notif/${stationArtKey(currentStation)}.png`;
   navigator.mediaSession.metadata = new MediaMetadata({
-    title: station.name,
-    artist: 'Vice City Radio',
-    album: 'GTA Vice City',
+    title: track ? track[1] : station.name,
+    artist: track ? track[2] : 'Vice City Radio',
+    album: station.name,
     artwork: [
-      isSvg
-        ? { src: station.logo, sizes: 'any', type: 'image/svg+xml' }
-        : { src: station.logo, type: 'image/webp' }
+      { src: art, sizes: '192x192', type: 'image/png' },
+      { src: art, sizes: '512x512', type: 'image/png' }
     ]
   });
 };
