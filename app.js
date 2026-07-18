@@ -226,7 +226,9 @@ const setGlobalVolume = (val) => {
   try { localStorage.setItem('globalVolume', String(globalVolume)); } catch (e) {}
   applyVolume();
   updateVolumeIcon();
-  volumeValue.textContent = Math.round(globalVolume * 100) + '%';
+  const label = Math.round(globalVolume * 100) + '%';
+  volumeValue.textContent = label;
+  volumeValue.dataset.text = label; // ombre du texte texturé (::before)
   volumeSlider.value = Math.round(globalVolume * 100);
 };
 

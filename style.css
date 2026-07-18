@@ -74,15 +74,43 @@ body {
   height: auto;
 }
 
+/* Texte rose texturé (technique xeno-series-heardle) : la texture marbre
+   recolorée #FF98E1/#AB559B remplit les glyphes via background-clip:text.
+   Le fill étant transparent, un text-shadow transparaîtrait à travers les
+   lettres : l'ombre est donc un pseudo-élément dupliquant le texte
+   (data-text) décalé derrière. */
+.txt-marble {
+  position: relative;
+  background: url('logos/marble-pink.png');
+  background-size: 200px;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.txt-marble::before {
+  content: attr(data-text);
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: -1;
+  background: none;
+  color: #1D201C;
+  -webkit-text-fill-color: #1D201C;
+  transform: translate(4px, 4px);
+}
+
 .wordmark {
   margin: 0;
   font-family: 'Pricedown', 'Arial', sans-serif;
   font-weight: normal;
   font-size: clamp(1.8rem, 5.1vw, 3.15rem);
   letter-spacing: 1px;
-  color: #FF98E1;
-  /* seule ombre portée en bas à GAUCHE de toute l'interface */
-  text-shadow: -4px 4px 0 #1D201C;
+}
+
+/* seule ombre portée en bas à GAUCHE de toute l'interface */
+.wordmark.txt-marble::before {
+  transform: translate(-4px, 4px);
 }
 
 /* Titre de la station courante, en haut au centre */
@@ -133,8 +161,6 @@ body {
   font-family: 'Pricedown', 'Arial', sans-serif;
   font-weight: normal;
   font-size: clamp(1.6rem, 5vw, 2.6rem);
-  color: #FF98E1;
-  text-shadow: 4px 4px 0 #1D201C;
 }
 
 .picker-grid {
@@ -246,9 +272,11 @@ body {
   font-family: 'Arborcrest', 'Arial', sans-serif;
   font-size: 0.75rem;
   font-weight: 600;
-  color: #FF98E1;
   letter-spacing: 0.5px;
-  text-shadow: 2px 2px 0 #1D201C;
+}
+
+.volume-value.txt-marble::before {
+  transform: translate(2px, 2px);
 }
 
 .volume-slider {
