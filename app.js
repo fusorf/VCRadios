@@ -609,21 +609,23 @@ const pickStation = (index) => {
   stationPicker.style.display = 'none';
   stationPicker.classList.remove('appear');
   backButton.style.display = 'flex';
+  pauseButton.style.display = 'none';
   if (!started) {
     startRadio(index); // crée l'AudioContext dans le geste, avant le sfx
     playUiSfx('select');
     return;
   }
   playUiSfx('select');
-  // la radio n'a jamais été coupée : on rouvre la fenêtre, et on ne switche
-  // que si une autre station a été choisie
   if (index !== currentStation) {
     carouselPos = index;
     carouselTarget = index;
     renderCarousel();
     setStation(index); // static + switch + masque + titre
   } else {
+    // même station : rouvrir la fenêtre, et relancer la lecture si elle
+    // avait été coupée par le bouton pause
     retargetMask();
+    if (players[currentStation].paused) playStation(currentStation);
   }
 };
 
@@ -641,6 +643,7 @@ backButton.addEventListener('click', () => {
     returningToMenu = false;
     stationPicker.style.display = 'flex';
     stationPicker.classList.add('appear');
+    updatePauseButton();
   }, MASK_DURATION + 100);
 });
 
@@ -661,6 +664,23 @@ const morphControl = (e) => {
 };
 backButton.addEventListener('pointerenter', morphControl);
 volumeToggle.addEventListener('pointerenter', morphControl);
+
+// Bouton pause du menu de sélection : coupe la station en cours, affiché
+// uniquement quand la grille est ouverte et qu'une station joue
+const pauseButton = document.getElementById('pauseButton');
+pauseButton.style.clipPath = randomTilePoly();
+pauseButton.addEventListener('pointerenter', morphControl);
+
+const updatePauseButton = () => {
+  const anyPlaying = players.some(el => !el.paused);
+  pauseButton.style.display = pickerOpen() && anyPlaying ? 'flex' : 'none';
+};
+
+pauseButton.addEventListener('click', () => {
+  playUiSfx('select');
+  stopAll();
+  updatePauseButton();
+});
 
 const initPicker = () => {
   const grid = stationPicker.querySelector('.picker-grid');
