@@ -28,7 +28,7 @@ body {
   width: 100%;
   height: 100%;
   background: #46414f url('logos/background.png');
-  background-size: 1360px;
+  background-size: 907px;
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
@@ -78,10 +78,11 @@ body {
   margin: 0;
   font-family: 'Pricedown', 'Arial', sans-serif;
   font-weight: normal;
-  font-size: clamp(1.2rem, 3.4vw, 2.1rem);
+  font-size: clamp(1.8rem, 5.1vw, 3.15rem);
   letter-spacing: 1px;
-  color: #f966ad;
-  text-shadow: 4px 4px 0 #000;
+  color: #FF98E1;
+  /* seule ombre portée en bas à GAUCHE de toute l'interface */
+  text-shadow: -4px 4px 0 #1D201C;
 }
 
 /* Titre de la station courante, en haut au centre */
@@ -97,7 +98,7 @@ body {
   letter-spacing: 2px;
   text-transform: uppercase;
   color: #7fd6f2;
-  text-shadow: 3px 3px 0 rgba(0, 0, 0, 0.85);
+  text-shadow: 3px 3px 0 #1D201C;
   white-space: nowrap;
 }
 
@@ -132,8 +133,8 @@ body {
   font-family: 'Pricedown', 'Arial', sans-serif;
   font-weight: normal;
   font-size: clamp(1.6rem, 5vw, 2.6rem);
-  color: #f966ad;
-  text-shadow: 4px 4px 0 #000;
+  color: #FF98E1;
+  text-shadow: 4px 4px 0 #1D201C;
 }
 
 .picker-grid {
@@ -196,7 +197,7 @@ body {
 .volume-toggle svg {
   width: 20px;
   height: 20px;
-  filter: drop-shadow(2px 2px 0 #000);
+  filter: drop-shadow(2px 2px 0 #1D201C);
 }
 
 /* Contrôle du volume (repris de xeno-series-heardle, thème rose),
@@ -245,9 +246,9 @@ body {
   font-family: 'Arborcrest', 'Arial', sans-serif;
   font-size: 0.75rem;
   font-weight: 600;
-  color: #f966ad;
+  color: #FF98E1;
   letter-spacing: 0.5px;
-  text-shadow: 2px 2px 0 #000;
+  text-shadow: 2px 2px 0 #1D201C;
 }
 
 .volume-slider {
@@ -268,25 +269,25 @@ body {
   appearance: none;
   width: 16px;
   height: 16px;
-  background: #f966ad;
+  background: #FF98E1;
   border-radius: 50%;
   cursor: pointer;
-  box-shadow: 2px 2px 0 #000;
+  box-shadow: 2px 2px 0 #1D201C;
   transition: box-shadow 0.2s;
 }
 
 .volume-slider::-webkit-slider-thumb:hover {
-  box-shadow: 2px 2px 0 #000, 0 0 12px rgba(249, 102, 173, 0.8);
+  box-shadow: 2px 2px 0 #1D201C, 0 0 12px rgba(255, 152, 225, 0.8);
 }
 
 .volume-slider::-moz-range-thumb {
   width: 16px;
   height: 16px;
-  background: #f966ad;
+  background: #FF98E1;
   border-radius: 50%;
   border: none;
   cursor: pointer;
-  box-shadow: 2px 2px 0 #000;
+  box-shadow: 2px 2px 0 #1D201C;
 }
 
 .volume-slider::-moz-range-track {
