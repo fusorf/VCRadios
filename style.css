@@ -247,6 +247,7 @@ body {
   font-weight: 600;
   color: #f966ad;
   letter-spacing: 0.5px;
+  text-shadow: 2px 2px 0 #000;
 }
 
 .volume-slider {
@@ -270,12 +271,12 @@ body {
   background: #f966ad;
   border-radius: 50%;
   cursor: pointer;
-  box-shadow: 0 0 6px rgba(249, 102, 173, 0.5);
+  box-shadow: 2px 2px 0 #000;
   transition: box-shadow 0.2s;
 }
 
 .volume-slider::-webkit-slider-thumb:hover {
-  box-shadow: 0 0 12px rgba(249, 102, 173, 0.8);
+  box-shadow: 2px 2px 0 #000, 0 0 12px rgba(249, 102, 173, 0.8);
 }
 
 .volume-slider::-moz-range-thumb {
@@ -285,7 +286,7 @@ body {
   border-radius: 50%;
   border: none;
   cursor: pointer;
-  box-shadow: 0 0 6px rgba(249, 102, 173, 0.5);
+  box-shadow: 2px 2px 0 #000;
 }
 
 .volume-slider::-moz-range-track {

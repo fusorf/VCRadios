@@ -132,10 +132,6 @@ let staticGain = null;
 const staticBuffers = [];
 let staticIndex = 0;
 
-const staticFetches = STATIC_SOUNDS.map(url =>
-  fetch(url).then(r => r.arrayBuffer()).catch(() => null)
-);
-
 // SFX d'interface (menu GTA) : deux variantes par action, tirage aléatoire
 const UI_SOUNDS = {
   hover: ['sfx/ui/hover1.mp3', 'sfx/ui/hover2.mp3'],
@@ -143,10 +139,26 @@ const UI_SOUNDS = {
   cancel: ['sfx/ui/cancel1.mp3', 'sfx/ui/cancel2.mp3']
 };
 const uiBuffers = { hover: [], select: [], cancel: [] };
-const uiFetches = Object.entries(UI_SOUNDS).flatMap(([kind, urls]) =>
-  urls.map(url =>
-    fetch(url).then(r => r.arrayBuffer()).then(data => ({ kind, data })).catch(() => null)
-  )
+
+// Décodage de tous les SFX dès le chargement via un OfflineAudioContext
+// (autorisé sans geste, contrairement au contexte principal) : les buffers
+// sont prêts avant le premier clic — sans ça, le "select" du tout premier
+// choix tombait pendant le décodage et restait muet.
+const DecodeCtx = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+const decodeCtx = DecodeCtx ? new DecodeCtx(1, 1, 44100) : null;
+
+const loadBuffer = (url, out) => {
+  if (!decodeCtx) return;
+  fetch(url)
+    .then(r => r.arrayBuffer())
+    .then(data => decodeCtx.decodeAudioData(data))
+    .then(buffer => out.push(buffer))
+    .catch(() => {});
+};
+
+STATIC_SOUNDS.forEach(url => loadBuffer(url, staticBuffers));
+Object.entries(UI_SOUNDS).forEach(([kind, urls]) =>
+  urls.forEach(url => loadBuffer(url, uiBuffers[kind]))
 );
 
 const initAudioCtx = () => {
@@ -155,20 +167,6 @@ const initAudioCtx = () => {
   staticGain = audioCtx.createGain();
   staticGain.gain.value = globalVolume;
   staticGain.connect(audioCtx.destination);
-  staticFetches.forEach(p => p.then(data => {
-    if (data) {
-      audioCtx.decodeAudioData(data)
-        .then(buffer => staticBuffers.push(buffer))
-        .catch(() => {});
-    }
-  }));
-  uiFetches.forEach(p => p.then(item => {
-    if (item) {
-      audioCtx.decodeAudioData(item.data)
-        .then(buffer => uiBuffers[item.kind].push(buffer))
-        .catch(() => {});
-    }
-  }));
 };
 
 const playUiSfx = (kind) => {
@@ -681,6 +679,16 @@ const initPicker = () => {
     grid.appendChild(tile);
   });
 };
+
+// Contexte audio créé au tout premier geste, où qu'il soit : les sons
+// d'interface (hover notamment) fonctionnent dès la première interaction,
+// avant même le choix d'une station
+const primeAudio = () => {
+  initAudioCtx();
+  if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+};
+document.addEventListener('pointerdown', primeAudio, { capture: true, once: true });
+document.addEventListener('keydown', primeAudio, { capture: true, once: true });
 
 initCarousel();
 initPicker();
