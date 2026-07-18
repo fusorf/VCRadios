@@ -390,6 +390,7 @@ const closeMask = () => retargetMaskTo([
 renderMask(maskPoints);
 
 const updateStationTitle = () => {
+  stationTitle.style.display = '';
   stationTitle.textContent = stations[currentStation].name;
 };
 
@@ -625,6 +626,7 @@ const pickStation = (index) => {
     // même station : rouvrir la fenêtre, et relancer la lecture si elle
     // avait été coupée par le bouton pause
     retargetMask();
+    updateStationTitle();
     if (players[currentStation].paused) playStation(currentStation);
   }
 };
@@ -680,6 +682,8 @@ pauseButton.addEventListener('click', () => {
   playUiSfx('select');
   stopAll();
   updatePauseButton();
+  // plus rien ne joue : le titre de station en haut n'a plus lieu d'être
+  stationTitle.style.display = 'none';
 });
 
 const initPicker = () => {
