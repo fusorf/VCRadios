@@ -4,7 +4,7 @@
 // sur la racine du domaine et cassaient l'installation).
 // Les radios streament directement depuis R2 (Range natif + CDN) et ne sont
 // volontairement PAS interceptées ni mises en cache ici.
-const CACHE_VERSION = 'v7';
+const CACHE_VERSION = 'v8';
 const STATIC_CACHE = 'static-' + CACHE_VERSION;
 const IMAGE_CACHE = 'images-cache';
 
@@ -13,6 +13,7 @@ const PRECACHE_FILES = [
   './index.html',
   './style.css',
   './app.js',
+  './tracks.js',
   './manifest.json',
   './sfx/static1.mp3',
   './sfx/static2.mp3',

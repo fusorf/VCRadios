@@ -335,6 +335,7 @@ const step = (direction) => {
 // À chaque changement de station, nouveaux points et interpolation.
 const maskPath = document.getElementById('maskPath');
 const stationTitle = document.getElementById('stationTitle');
+const trackInfo = document.getElementById('trackInfo');
 
 const rand = (a, b) => a + Math.random() * (b - a);
 
@@ -392,6 +393,22 @@ renderMask(maskPoints);
 const updateStationTitle = () => {
   stationTitle.style.display = '';
   stationTitle.textContent = stations[currentStation].name;
+  updateTrackInfo();
+};
+
+// Morceau en cours = dernière entrée de la tracklist dont le début est passé.
+// Avant le premier titre (intro/jingle DJ) ou sur une station parlée : rien.
+const updateTrackInfo = () => {
+  const el = players[currentStation];
+  const list = STATION_TRACKS[stations[currentStation].file];
+  if (!list || el.paused) { trackInfo.textContent = ''; return; }
+  const pos = livePosition(currentStation);
+  if (pos === null) { trackInfo.textContent = ''; return; }
+  let current = null;
+  for (const track of list) {
+    if (track[0] <= pos) current = track; else break;
+  }
+  trackInfo.textContent = current ? `${current[1]} — ${current[2]}` : '';
 };
 
 // --- Drag unifié tactile + souris (Pointer Events) -------------------------
@@ -682,8 +699,9 @@ pauseButton.addEventListener('click', () => {
   playUiSfx('select');
   stopAll();
   updatePauseButton();
-  // plus rien ne joue : le titre de station en haut n'a plus lieu d'être
+  // plus rien ne joue : le titre de station et le morceau n'ont plus lieu d'être
   stationTitle.style.display = 'none';
+  trackInfo.textContent = '';
 });
 
 const initPicker = () => {
@@ -801,6 +819,10 @@ setInterval(() => {
     syncToLive(currentStation, 10);
   }
 }, 4000);
+
+// Rafraîchit le morceau affiché au fil de la lecture (les titres changent
+// toutes les quelques minutes, une vérif toutes les 2 s suffit)
+setInterval(updateTrackInfo, 2000);
 
 // --- Clavier ---------------------------------------------------------------
 document.addEventListener('keydown', e => {

@@ -130,6 +130,25 @@ body {
   white-space: nowrap;
 }
 
+/* Titre - artiste du morceau en cours, sous le nom de la station */
+#trackInfo {
+  position: fixed;
+  top: calc(20px + clamp(1.4rem, 3.6vw, 2.3rem));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 60;
+  pointer-events: none;
+  font-family: 'Arborcrest', 'Arial', sans-serif;
+  font-size: clamp(0.8rem, 2vw, 1.15rem);
+  letter-spacing: 1px;
+  color: #FF98E1;
+  text-shadow: 2px 2px 0 #1D201C;
+  white-space: nowrap;
+  max-width: 92vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* Grille de choix de station (écran d'accueil, sert de geste de déblocage) */
 #stationPicker {
   position: fixed;
