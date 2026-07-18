@@ -82,7 +82,7 @@ body {
 .txt-marble {
   position: relative;
   background: url('logos/marble-pink.png');
-  background-size: 200px;
+  background-size: 400px;
   background-clip: text;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
