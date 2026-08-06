@@ -324,7 +324,9 @@ const goTo = (target) => {
 // Avance d'un cran dans une direction (flèches, media session) : la cible non
 // bornée garantit le bouclage dans le même sens
 const step = (direction) => {
-  if (!started || pickerOpen() || returningToMenu) return;
+  // le panneau hors ligne bloque les pointeurs (scrim) mais pas le clavier
+  if (!started || pickerOpen() || returningToMenu
+      || (window.vcrOffline && window.vcrOffline.panelOpen())) return;
   goTo(Math.round(carouselTarget) + direction);
 };
 

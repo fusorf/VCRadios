@@ -43,6 +43,28 @@
     <button class="back-toggle" id="pauseButton" style="display: none;" title="Couper la radio">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#FF98E1" d="M6.5 4.5h4v15h-4Zm7 0h4v15h-4Z"/></svg>
     </button>
+    <button class="back-toggle offline-toggle" id="offlineButton" style="display: none;" title="Écoute hors ligne">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#FF98E1" d="M9.2 4h5.6v8.4h4.8L12 20l-7.6-7.6h4.8Z"/></svg>
+    </button>
+    <!-- Panneau de gestion des téléchargements hors ligne (PWA installée),
+         rows générées par offline.js -->
+    <div id="offlinePanel" style="display: none;">
+      <div class="offline-sheet">
+        <h2 class="offline-title txt-marble" data-text="Écoute hors ligne">Écoute hors ligne</h2>
+        <div class="offline-list" id="offlineList"></div>
+        <p class="offline-hint" id="offlineHint" style="display: none;">Garde l'app ouverte pendant le téléchargement</p>
+        <div class="offline-footer">
+          <span class="offline-total" id="offlineTotal"></span>
+          <div class="offline-actions">
+            <button class="offline-small-btn" id="offlineDlAll">Tout télécharger</button>
+            <button class="offline-small-btn" id="offlinePurgeAll" style="display: none;">Tout supprimer</button>
+          </div>
+        </div>
+      </div>
+      <button class="back-toggle offline-close" id="offlineClose" title="Fermer">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="#FF98E1" stroke-width="3" stroke-linecap="round" d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
     <div class="volume-selector" id="volumeSelector">
       <button class="volume-toggle" id="volumeToggle"></button>
       <div class="volume-menu" id="volumeMenu" style="display: none;">
@@ -52,6 +74,7 @@
     </div>
     <script src="tracks.js"></script>
     <script src="app.js"></script>
+    <script src="offline.js"></script>
     <script>
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {

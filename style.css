@@ -58,7 +58,7 @@ body {
    alignés sur la même ligne */
 .hud {
   position: fixed;
-  top: 44px;
+  top: calc(44px + env(safe-area-inset-top, 0px));
   left: 20px;
   right: 24px;
   z-index: 60;
@@ -116,7 +116,7 @@ body {
 /* Titre de la station courante, en haut au centre */
 #stationTitle {
   position: fixed;
-  top: 14px;
+  top: calc(14px + env(safe-area-inset-top, 0px));
   left: 50%;
   transform: translateX(-50%);
   z-index: 60;
@@ -133,7 +133,7 @@ body {
 /* Titre - artiste du morceau en cours, sous le nom de la station */
 #trackInfo {
   position: fixed;
-  top: calc(20px + clamp(1.4rem, 3.6vw, 2.3rem));
+  top: calc(20px + clamp(1.4rem, 3.6vw, 2.3rem) + env(safe-area-inset-top, 0px));
   left: 50%;
   transform: translateX(-50%);
   z-index: 60;
@@ -208,9 +208,12 @@ body {
   filter: brightness(1.25);
 }
 
+/* Dimensions définies (pas max-*) : la taille ne dépend pas de la taille
+   intrinsèque du PNG, sinon iOS Safari garde la taille naturelle tant
+   qu'un reflow n'est pas forcé quand l'image charge après le layout */
 .picker-tile img {
-  max-width: 85%;
-  max-height: 80%;
+  width: 85%;
+  height: 80%;
   object-fit: contain;
   pointer-events: none;
 }
@@ -220,7 +223,7 @@ body {
 .back-toggle {
   position: fixed;
   right: 70px;
-  bottom: 18px;
+  bottom: calc(18px + env(safe-area-inset-bottom, 0px));
   z-index: 80;
   width: 44px;
   height: 44px;
@@ -250,7 +253,7 @@ body {
 .volume-selector {
   position: fixed;
   right: 18px;
-  bottom: 18px;
+  bottom: calc(18px + env(safe-area-inset-bottom, 0px));
   z-index: 80;
 }
 
@@ -402,4 +405,177 @@ body {
     opacity: 1;
     transform: translateY(0);
   }
+}
+
+/* --- Écoute hors ligne (PWA installée) ------------------------------------
+   Bouton flèche bas : 3e emplacement de la rangée bas-droite (volume 18px,
+   retour/pause 70px). Déclaré après le bloc hover:none pour l'emporter sur
+   la règle .back-toggle { right: 18px } du tactile. */
+.offline-toggle {
+  right: 122px;
+}
+
+@media (hover: none) {
+  /* volume masqué au tactile : retour/pause à 18px, offline à 70px */
+  .offline-toggle {
+    right: 70px;
+  }
+}
+
+/* Panneau plein écran : scrim noir au-dessus de tout (picker z70, boutons
+   z80), contenu flottant sans fond propre — même esprit que le picker */
+#offlinePanel {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+}
+
+#offlinePanel.appear {
+  animation: pickerFadeIn 0.45s ease forwards;
+}
+
+.offline-sheet {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: clamp(10px, 2vh, 18px);
+  box-sizing: border-box;
+  max-height: 100dvh;
+  padding: calc(16px + env(safe-area-inset-top, 0px)) 16px
+           calc(80px + env(safe-area-inset-bottom, 0px));
+}
+
+.offline-title {
+  margin: 0;
+  font-family: 'Pricedown', 'Arial', sans-serif;
+  font-weight: normal;
+  font-size: clamp(1.4rem, 4.5vw, 2.2rem);
+}
+
+.offline-list {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(8px, 1.4vh, 14px);
+  width: min(92vw, 560px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px;
+}
+
+/* Rows en quadrilatères texturés, même famille que les tuiles du picker
+   (clip-path aléatoire posé en JS, morph au survol) */
+.offline-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: #46414f url('logos/background.png');
+  background-size: 340px;
+  padding: 8px 16px;
+  min-height: 52px;
+  transition: clip-path 0.35s ease, filter 0.2s ease;
+}
+
+.offline-row:hover {
+  filter: brightness(1.25);
+}
+
+.offline-logo {
+  width: 52px;
+  height: 38px;
+  object-fit: contain;
+  flex-shrink: 0;
+  pointer-events: none;
+}
+
+.offline-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+}
+
+/* même style que le titre de station courante */
+.offline-name {
+  font-family: 'Arborcrest', 'Arial', sans-serif;
+  font-size: 0.85rem;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: #7fd6f2;
+  text-shadow: 2px 2px 0 #1D201C;
+}
+
+.offline-status {
+  font-family: 'Arborcrest', 'Arial', sans-serif;
+  font-size: 0.72rem;
+  letter-spacing: 0.5px;
+  color: #FF98E1;
+  text-shadow: 2px 2px 0 #1D201C;
+}
+
+/* même piste que le slider de volume, remplissage rose, léger quadrilatère */
+.offline-bar {
+  height: 10px;
+  width: 100%;
+  margin-top: 2px;
+  background: rgba(255, 255, 255, 0.12);
+  box-shadow: 2px 2px 0 #1D201C;
+  clip-path: polygon(0.8% 12%, 99.4% 0%, 99% 88%, 0.2% 100%);
+}
+
+.offline-bar-fill {
+  height: 100%;
+  width: 0%;
+  background: #FF98E1;
+}
+
+.offline-hint,
+.offline-total {
+  margin: 0;
+  font-family: 'Arborcrest', 'Arial', sans-serif;
+  font-size: 0.75rem;
+  letter-spacing: 0.5px;
+  color: #7fd6f2;
+  text-shadow: 2px 2px 0 #1D201C;
+  text-align: center;
+}
+
+.offline-footer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.offline-actions {
+  display: flex;
+  gap: 12px;
+}
+
+.offline-small-btn {
+  font-family: 'Arborcrest', 'Arial', sans-serif;
+  font-size: 0.8rem;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: #FF98E1;
+  text-shadow: 2px 2px 0 #1D201C;
+  background: #46414f url('logos/background.png');
+  background-size: 340px;
+  border: none;
+  cursor: pointer;
+  padding: 12px 18px;
+  transition: clip-path 0.35s ease, filter 0.2s ease;
+}
+
+.offline-small-btn:hover {
+  filter: brightness(1.25);
+}
+
+/* croix de fermeture : slot habituel du bouton bas-droite */
+.offline-close {
+  right: 18px;
 }
