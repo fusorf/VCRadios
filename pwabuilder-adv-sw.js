@@ -123,8 +123,15 @@ const networkFirst = async (request) => {
 // Stations téléchargées : iOS/Safari envoie TOUJOURS "Range: bytes=0-" sur
 // les <audio> et refuse de lire sans réponse 206 correcte — on synthétise
 // donc les 206 depuis le blob caché (pattern Workbox range-requests).
-// blob.slice est paresseux (adossé au disque) : servir jusqu'à la fin du
-// fichier ne copie rien en mémoire, pas besoin de borner comme le worker R2.
+// Les plages ouvertes (bytes=X-) sont BORNÉES à 2 Mo comme dans le worker R2 :
+// ce cap n'est pas une question de mémoire (blob.slice est paresseux) mais de
+// comportement WebKit — servir le fichier entier en une seule réponse 206
+// fait ignorer/rogner les seeks sur iOS (lecture depuis 0, même symptôme que
+// les ranges non bornées du worker avant leur cap). Le Content-Range total
+// donne taille et durée, le navigateur enchaîne les chunks au fil de la
+// lecture, identique au chemin streaming en ligne.
+const RADIO_CHUNK = 2 * 1024 * 1024;
+
 const offlineRadio = async (request) => {
   const cache = await caches.open(RADIO_CACHE);
   // match par URL et pas par Request : un header Range sur la requête peut
@@ -158,7 +165,9 @@ const offlineRadio = async (request) => {
     end = size - 1;
   } else {
     start = Number(m[1]);
-    end = m[2] === '' ? size - 1 : Math.min(Number(m[2]), size - 1);
+    end = m[2] === ''
+      ? Math.min(size - 1, start + RADIO_CHUNK - 1) // plage ouverte : bornée
+      : Math.min(Number(m[2]), size - 1);
   }
   if (start >= size || start > end) {
     return new Response(null, { status: 416, headers: { 'Content-Range': 'bytes */' + size } });
