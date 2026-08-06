@@ -342,10 +342,10 @@ const trackInfo = document.getElementById('trackInfo');
 const rand = (a, b) => a + Math.random() * (b - a);
 
 const randomMaskPoints = () => [
-  { x: rand(6, 28), y: rand(10, 32) }, // haut gauche
-  { x: rand(72, 94), y: rand(10, 32) }, // haut droit
-  { x: rand(72, 94), y: rand(68, 90) }, // bas droit
-  { x: rand(6, 28), y: rand(68, 90) }  // bas gauche
+  { x: rand(8, 24), y: rand(12, 28) }, // haut gauche
+  { x: rand(76, 92), y: rand(12, 28) }, // haut droit
+  { x: rand(76, 92), y: rand(72, 88) }, // bas droit
+  { x: rand(8, 24), y: rand(72, 88) }  // bas gauche
 ];
 
 // Masque fermé (les 4 points au centre) avant le lancement

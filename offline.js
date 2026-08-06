@@ -14,13 +14,16 @@ const RADIO_CACHE = 'radio-offline';
 
 const OFFLINE_SUPPORTED = 'caches' in window && 'serviceWorker' in navigator;
 
-// Le bouton n'apparaît qu'en PWA installée (seul mode où iOS garantit un
-// stockage pérenne, exempté de la purge des 7 jours). ?dl=1 force
-// l'interface pour tester dans un navigateur classique.
 const isInstalledPwa = () =>
   window.matchMedia('(display-mode: standalone)').matches
   || window.navigator.standalone === true
   || new URLSearchParams(location.search).has('dl');
+
+// Interface visible en PWA installée, et aussi dans un navigateur classique
+// hors iOS (desktop/Android : stockage fiable). Cachée uniquement sur iOS
+// non installé : stockage purgé après 7 jours d'inactivité, et de toute
+// façon séparé de celui de la PWA écran d'accueil. ?dl=1 force partout.
+const showOfflineUi = () => isInstalledPwa() || !IS_IOS;
 
 // URL virtuelle same-origin par station (radio/EMOTION.mp3 -> offline/EMOTION.mp3),
 // absolue pour des comparaisons fiables avec el.src (getter toujours absolu)
@@ -41,7 +44,8 @@ const resetState = (index) => {
   dlState[index] = { status: 'none', received: 0, total: 0, size: 0, message: '' };
 };
 
-const fmtMB = (bytes) => (bytes / 1048576).toFixed(1).replace('.', ',') + ' Mo';
+const fmtMB = (bytes) =>
+  (bytes / 1048576).toFixed(1).replace('.', T.decimal) + ' ' + T.mb;
 
 // --- Éléments d'interface --------------------------------------------------
 const offlineButton = document.getElementById('offlineButton');
@@ -59,11 +63,6 @@ let rows = []; // { statusEl, bar, fill } par station ; vide hors PWA
 // app.js consulte panelOpen() pour bloquer les flèches clavier du carrousel
 window.vcrOffline = { panelOpen: () => panelVisible };
 
-const STATUS_LABELS = {
-  none: 'Streaming seul',
-  queued: 'En attente…'
-};
-
 const renderRow = (index) => {
   const row = rows[index];
   if (!row) return;
@@ -71,7 +70,7 @@ const renderRow = (index) => {
   if (state.status === 'downloading') {
     const pct = state.total ? Math.round(state.received / state.total * 100) : 0;
     row.statusEl.textContent = state.total
-      ? `${pct} % — ${fmtMB(state.received)} / ${fmtMB(state.total)}`
+      ? `${T.pct(pct)} — ${fmtMB(state.received)} / ${fmtMB(state.total)}`
       : fmtMB(state.received);
     row.bar.style.display = '';
     row.fill.style.width = pct + '%';
@@ -79,9 +78,10 @@ const renderRow = (index) => {
     row.bar.style.display = 'none';
     row.fill.style.width = '0%';
     row.statusEl.textContent =
-      state.status === 'done' ? `Hors ligne — ${fmtMB(state.size)}`
+      state.status === 'done' ? `${T.offlineLabel} — ${fmtMB(state.size)}`
       : state.status === 'error' ? state.message
-      : STATUS_LABELS[state.status];
+      : state.status === 'queued' ? T.queued
+      : T.streamingOnly;
   }
 };
 
@@ -108,12 +108,12 @@ const updateControls = () => {
   const doneSizes = dlState.filter(s => s.status === 'done');
   const total = doneSizes.reduce((sum, s) => sum + s.size, 0);
   offlineTotal.textContent = doneSizes.length
-    ? `${doneSizes.length}/${stations.length} stations — ${fmtMB(total)} hors ligne`
-    : 'Aucune station téléchargée';
+    ? `${doneSizes.length}/${stations.length} stations — ${fmtMB(total)} ${T.offlineLower}`
+    : T.noneDownloaded;
   offlineHint.style.display = downloading() ? '' : 'none';
   const allDone = dlState.every(s => s.status === 'done');
   offlineDlAll.style.display = allDone ? 'none' : '';
-  offlineDlAll.textContent = downloading() ? 'Annuler' : 'Tout télécharger';
+  offlineDlAll.textContent = downloading() ? T.cancel : T.downloadAll;
   offlinePurgeAll.style.display = doneSizes.length || downloading() ? '' : 'none';
 };
 
@@ -223,11 +223,11 @@ const downloadStation = async (index) => {
       resetState(index);
     } else if (e.name === 'QuotaExceededError') {
       state.status = 'error';
-      state.message = 'Stockage plein';
+      state.message = T.storageFull;
       drainQueue(); // inutile d'enchaîner les échecs
     } else {
       state.status = 'error';
-      state.message = navigator.onLine ? 'Échec du téléchargement' : 'Hors connexion';
+      state.message = navigator.onLine ? T.downloadFailed : T.noConnection;
     }
   } finally {
     dlAbort = null;
@@ -299,11 +299,21 @@ const purgeAll = async () => {
 };
 
 // --- Panneau ---------------------------------------------------------------
+// Quadrilatère de la grande tuile-liste : coins tirés jusqu'à 6 % — bien
+// marqué, mais moins que les 14 % des petits boutons (les bords obliques
+// traversent toute la largeur, le padding CSS doit absorber la coupe max)
+const listPoly = () => {
+  const r = () => (Math.random() * 6).toFixed(1);
+  return `polygon(${r()}% ${r()}%, ${100 - r()}% ${r()}%, ${100 - r()}% ${100 - r()}%, ${r()}% ${100 - r()}%)`;
+};
+
 const openPanel = () => {
   panelVisible = true;
   playUiSfx('select');
   offlinePanel.style.display = 'flex';
   offlinePanel.classList.add('appear');
+  // nouvelle forme à chaque ouverture, comme le menu volume
+  document.getElementById('offlineTile').style.clipPath = listPoly();
   updateControls();
   updateEstimate();
 };
@@ -322,7 +332,8 @@ const updateEstimate = async () => {
     const { usage, quota } = await navigator.storage.estimate();
     if (!quota) return;
     const free = (quota - usage) / 1073741824;
-    offlineTotal.textContent += ` · ${free.toFixed(1).replace('.', ',')} Go libres`;
+    offlineTotal.textContent +=
+      ` · ${free.toFixed(1).replace('.', T.decimal)} ${T.gb} ${T.free}`;
   } catch (e) {}
 };
 
@@ -330,11 +341,6 @@ const initOfflinePanel = () => {
   rows = stations.map((station, index) => {
     const row = document.createElement('div');
     row.classList.add('offline-row');
-    row.style.clipPath = randomTilePoly();
-    row.addEventListener('pointerenter', (e) => {
-      row.style.clipPath = randomTilePoly();
-      hoverSfx(e);
-    });
 
     const logo = document.createElement('img');
     logo.classList.add('offline-logo');
@@ -387,16 +393,16 @@ const initOfflinePanel = () => {
   offlinePurgeAll.addEventListener('click', () => {
     if (!purgeArmed) {
       playUiSfx('select');
-      offlinePurgeAll.textContent = 'Confirmer ?';
+      offlinePurgeAll.textContent = T.confirm;
       purgeArmed = setTimeout(() => {
         purgeArmed = 0;
-        offlinePurgeAll.textContent = 'Tout supprimer';
+        offlinePurgeAll.textContent = T.deleteAll;
       }, 3000);
       return;
     }
     clearTimeout(purgeArmed);
     purgeArmed = 0;
-    offlinePurgeAll.textContent = 'Tout supprimer';
+    offlinePurgeAll.textContent = T.deleteAll;
     playUiSfx('cancel');
     purgeAll();
   });
@@ -448,7 +454,7 @@ if (OFFLINE_SUPPORTED) {
     });
   });
 
-  if (isInstalledPwa()) initOfflinePanel();
+  if (showOfflineUi()) initOfflinePanel();
   // le check tourne même hors PWA : un utilisateur ayant téléchargé en PWA
   // garde le bénéfice s'il ouvre l'URL dans un onglet navigateur
   initOffline();

@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="fr">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
@@ -34,44 +34,51 @@
     <div id="stationTitle"></div>
     <div id="trackInfo"></div>
     <div id="stationPicker">
-      <h2 class="picker-title txt-marble" data-text="Choisis ta station">Choisis ta station</h2>
+      <h2 class="picker-title txt-marble" data-text="Choose your station">Choose your station</h2>
       <div class="picker-grid"></div>
     </div>
-    <button class="back-toggle" id="backButton" style="display: none;" title="Retour à la sélection">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#FF98E1" d="M20 9.2H11.6V4.4L3.2 12l8.4 7.6v-4.8H20Z"/></svg>
-    </button>
-    <button class="back-toggle" id="pauseButton" style="display: none;" title="Couper la radio">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#FF98E1" d="M6.5 4.5h4v15h-4Zm7 0h4v15h-4Z"/></svg>
-    </button>
-    <button class="back-toggle offline-toggle" id="offlineButton" style="display: none;" title="Écoute hors ligne">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#FF98E1" d="M9.2 4h5.6v8.4h4.8L12 20l-7.6-7.6h4.8Z"/></svg>
-    </button>
-    <!-- Panneau de gestion des téléchargements hors ligne (PWA installée),
+    <!-- Rangée de contrôles bas-droite : flex, les boutons masqués ne
+         laissent pas de trou, le plus à droite reste collé au bord -->
+    <div class="controls-corner">
+      <button class="back-toggle" id="offlineButton" style="display: none;" title="Offline listening">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#FF98E1" d="M9.2 4h5.6v8.4h4.8L12 20l-7.6-7.6h4.8Z"/></svg>
+      </button>
+      <button class="back-toggle" id="backButton" style="display: none;" title="Back to selection">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#FF98E1" d="M20 9.2H11.6V4.4L3.2 12l8.4 7.6v-4.8H20Z"/></svg>
+      </button>
+      <button class="back-toggle" id="pauseButton" style="display: none;" title="Turn the radio off">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#FF98E1" d="M6.5 4.5h4v15h-4Zm7 0h4v15h-4Z"/></svg>
+      </button>
+      <div class="volume-selector" id="volumeSelector">
+        <button class="volume-toggle" id="volumeToggle"></button>
+        <div class="volume-menu" id="volumeMenu" style="display: none;">
+          <span class="volume-value txt-marble" id="volumeValue" data-text="100%">100%</span>
+          <input type="range" class="volume-slider" id="volumeSlider" min="0" max="100" value="100" />
+        </div>
+      </div>
+    </div>
+    <!-- Panneau de gestion des téléchargements hors ligne,
          rows générées par offline.js -->
     <div id="offlinePanel" style="display: none;">
       <div class="offline-sheet">
-        <h2 class="offline-title txt-marble" data-text="Écoute hors ligne">Écoute hors ligne</h2>
-        <div class="offline-list" id="offlineList"></div>
-        <p class="offline-hint" id="offlineHint" style="display: none;">Garde l'app ouverte pendant le téléchargement</p>
+        <h2 class="offline-title txt-marble" data-text="Offline listening">Offline listening</h2>
+        <div class="offline-tile" id="offlineTile">
+          <div class="offline-list" id="offlineList"></div>
+        </div>
+        <p class="offline-hint" id="offlineHint" style="display: none;">Keep the app open while downloading</p>
         <div class="offline-footer">
           <span class="offline-total" id="offlineTotal"></span>
           <div class="offline-actions">
-            <button class="offline-small-btn" id="offlineDlAll">Tout télécharger</button>
-            <button class="offline-small-btn" id="offlinePurgeAll" style="display: none;">Tout supprimer</button>
+            <button class="offline-small-btn" id="offlineDlAll">Download all</button>
+            <button class="offline-small-btn" id="offlinePurgeAll" style="display: none;">Delete all</button>
           </div>
         </div>
       </div>
-      <button class="back-toggle offline-close" id="offlineClose" title="Fermer">
+      <button class="back-toggle offline-close" id="offlineClose" title="Close">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="#FF98E1" stroke-width="3" stroke-linecap="round" d="M6 6l12 12M18 6L6 18"/></svg>
       </button>
     </div>
-    <div class="volume-selector" id="volumeSelector">
-      <button class="volume-toggle" id="volumeToggle"></button>
-      <div class="volume-menu" id="volumeMenu" style="display: none;">
-        <span class="volume-value txt-marble" id="volumeValue" data-text="100%">100%</span>
-        <input type="range" class="volume-slider" id="volumeSlider" min="0" max="100" value="100" />
-      </div>
-    </div>
+    <script src="i18n.js"></script>
     <script src="tracks.js"></script>
     <script src="app.js"></script>
     <script src="offline.js"></script>

@@ -6,7 +6,7 @@
 // volontairement PAS interceptées ni mises en cache ici. Exception : les URLs
 // virtuelles same-origin /offline/*.mp3, servies depuis le cache RADIO_CACHE
 // rempli par offline.js (téléchargements pour écoute hors ligne).
-const CACHE_VERSION = 'v10';
+const CACHE_VERSION = 'v11';
 const STATIC_CACHE = 'static-' + CACHE_VERSION;
 const IMAGE_CACHE = 'images-cache';
 // sans version : les stations téléchargées survivent aux bumps du shell
@@ -16,6 +16,7 @@ const PRECACHE_FILES = [
   './',
   './index.html',
   './style.css',
+  './i18n.js',
   './app.js',
   './tracks.js',
   './offline.js',

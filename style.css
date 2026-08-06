@@ -55,13 +55,14 @@ body {
 }
 
 /* HUD : logo Vice City à gauche, wordmark Pricedown à droite de l'écran,
-   alignés sur la même ligne */
+   alignés sur la même ligne. Au-dessus du panneau hors ligne (z90) : le
+   logo et le wordmark restent visibles sur son fond noir. */
 .hud {
   position: fixed;
   top: calc(44px + env(safe-area-inset-top, 0px));
   left: 20px;
   right: 24px;
-  z-index: 60;
+  z-index: 95;
   pointer-events: none;
   display: flex;
   flex-direction: row;
@@ -218,13 +219,21 @@ body {
   pointer-events: none;
 }
 
-/* Bouton retour vers la sélection, à gauche du volume — même DA polygonale
-   que les tuiles (clip-path aléatoire posé en JS, morph au survol) */
-.back-toggle {
+/* Rangée de contrôles bas-droite : les boutons masqués (display:none) ne
+   prennent pas de place, le plus à droite est toujours collé au bord */
+.controls-corner {
   position: fixed;
-  right: 70px;
+  right: 18px;
   bottom: calc(18px + env(safe-area-inset-bottom, 0px));
   z-index: 80;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Boutons de la rangée — même DA polygonale que les tuiles (clip-path
+   aléatoire posé en JS, morph au survol) */
+.back-toggle {
   width: 44px;
   height: 44px;
   border: none;
@@ -248,13 +257,10 @@ body {
   filter: drop-shadow(2px 2px 0 #1D201C);
 }
 
-/* Contrôle du volume (repris de xeno-series-heardle, thème rose),
-   visible aussi sur mobile */
+/* Contrôle du volume (repris de xeno-series-heardle, thème rose) ;
+   relatif : ancre du menu déroulant au-dessus */
 .volume-selector {
-  position: fixed;
-  right: 18px;
-  bottom: calc(18px + env(safe-area-inset-bottom, 0px));
-  z-index: 80;
+  position: relative;
 }
 
 .volume-toggle {
@@ -348,14 +354,10 @@ body {
 }
 
 /* Sur tactile : volume inutile (boutons physiques, et iOS ignore el.volume) ;
-   le bouton retour prend sa place */
+   la rangée flex resserre les boutons restants contre le bord droit */
 @media (hover: none) {
   .volume-selector {
     display: none;
-  }
-
-  .back-toggle {
-    right: 18px;
   }
 }
 
@@ -407,23 +409,9 @@ body {
   }
 }
 
-/* --- Écoute hors ligne (PWA installée) ------------------------------------
-   Bouton flèche bas : 3e emplacement de la rangée bas-droite (volume 18px,
-   retour/pause 70px). Déclaré après le bloc hover:none pour l'emporter sur
-   la règle .back-toggle { right: 18px } du tactile. */
-.offline-toggle {
-  right: 122px;
-}
-
-@media (hover: none) {
-  /* volume masqué au tactile : retour/pause à 18px, offline à 70px */
-  .offline-toggle {
-    right: 70px;
-  }
-}
-
-/* Panneau plein écran : scrim noir au-dessus de tout (picker z70, boutons
-   z80), contenu flottant sans fond propre — même esprit que le picker */
+/* --- Écoute hors ligne ----------------------------------------------------
+   Panneau plein écran : fond noir opaque au-dessus du picker (z70) et des
+   boutons (z80), sous le HUD (z95) — logo VC et wordmark restent visibles */
 #offlinePanel {
   position: fixed;
   inset: 0;
@@ -431,7 +419,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.6);
+  background: #000;
 }
 
 #offlinePanel.appear {
@@ -456,31 +444,35 @@ body {
   font-size: clamp(1.4rem, 4.5vw, 2.2rem);
 }
 
+/* La liste entière est UNE tuile texturée en quadrilatère (clip-path
+   aléatoire posé en JS à chaque ouverture). Le padding de la tuile absorbe
+   la coupe max du polygone (6 %), et le scroll vit DANS la zone sûre :
+   les rows ne passent jamais sous les bords obliques. */
+.offline-tile {
+  display: flex;
+  min-height: 0;
+  width: min(92vw, 560px);
+  box-sizing: border-box;
+  background: #46414f url('logos/background.png');
+  background-size: 340px;
+  padding: clamp(24px, 4.5vh, 40px) clamp(24px, 5vw, 40px);
+}
+
 .offline-list {
   display: flex;
   flex-direction: column;
   gap: clamp(8px, 1.4vh, 14px);
-  width: min(92vw, 560px);
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 4px;
 }
 
-/* Rows en quadrilatères texturés, même famille que les tuiles du picker
-   (clip-path aléatoire posé en JS, morph au survol) */
 .offline-row {
   display: flex;
   align-items: center;
   gap: 14px;
-  background: #46414f url('logos/background.png');
-  background-size: 340px;
-  padding: 8px 16px;
-  min-height: 52px;
-  transition: clip-path 0.35s ease, filter 0.2s ease;
-}
-
-.offline-row:hover {
-  filter: brightness(1.25);
+  min-height: 48px;
 }
 
 .offline-logo {
@@ -575,7 +567,10 @@ body {
   filter: brightness(1.25);
 }
 
-/* croix de fermeture : slot habituel du bouton bas-droite */
+/* croix de fermeture : slot habituel du bouton bas-droite (hors de la
+   rangée .controls-corner, elle se positionne elle-même) */
 .offline-close {
+  position: fixed;
   right: 18px;
+  bottom: calc(18px + env(safe-area-inset-bottom, 0px));
 }
