@@ -187,37 +187,48 @@ const playUiSfx = (kind) => {
 };
 
 // Static de changement de station : joué en BOUCLE jusqu'à ce que la station
-// visée démarre réellement ('playing'), comme en jeu — la mise en mémoire
-// tampon ne s'entend plus comme un blanc. Durée minimale = un static complet.
-// Renvoie la durée minimale du static, en secondes.
-let staticVoice = null;
+// visée soit réellement accrochée (voir checkTuned) — la mise en mémoire
+// tampon ne s'entend plus comme un blanc. La station démarre SOUS le static
+// (play() immédiat) : à l'accord, le static n'est pas coupé mais termine son
+// passage en cours jusqu'à sa fin naturelle — jamais d'échantillon tronqué.
+let staticVoice = null; // voix en boucle, en attente de l'accord
+let staticTail = null;  // voix qui termine son dernier passage après l'accord
 let staticSafety = null;
 const STATIC_MAX_MS = 8000; // jamais de grésillement infini (réseau mort)
-// Durée minimale du static avant que la station prenne le relais. Les
-// fichiers static durent ~1 s : attendre leur fin imposait ~900 ms de
-// latence à chaque switch, même vers une voisine déjà prête. Le static
-// bouclant jusqu'au 'playing', un switch "froid" reste masqué.
-const STATIC_MIN_S = 0.35;
 
+const fadeOutVoice = (voice) => {
+  const t = audioCtx.currentTime;
+  voice.gain.gain.setValueAtTime(voice.gain.gain.value, t);
+  voice.gain.gain.linearRampToValueAtTime(0, t + 0.06);
+  try { voice.source.stop(t + 0.07); } catch (e) {}
+};
+
+// Coupure (pause, nouveau switch, réseau mort) : court fondu, tout de suite
 const stopStatic = () => {
   if (staticSafety) { clearTimeout(staticSafety); staticSafety = null; }
-  if (!staticVoice || !audioCtx) { staticVoice = null; return; }
-  const { source, gain, minEnd } = staticVoice;
+  if (audioCtx) [staticVoice, staticTail].forEach(v => { if (v) fadeOutVoice(v); });
   staticVoice = null;
-  const t = Math.max(audioCtx.currentTime, minEnd);
-  // fondu un peu long : le static se retire sous la musique qui démarre
-  gain.gain.setValueAtTime(1, t);
-  gain.gain.linearRampToValueAtTime(0, t + 0.15);
-  try { source.stop(t + 0.16); } catch (e) {}
+  staticTail = null;
+};
+
+// Accord : fin de la boucle, le passage en cours va jusqu'au bout
+const finishStatic = () => {
+  if (staticSafety) { clearTimeout(staticSafety); staticSafety = null; }
+  const voice = staticVoice;
+  staticVoice = null;
+  if (!voice) return;
+  voice.source.loop = false;
+  staticTail = voice;
+  voice.source.onended = () => { if (staticTail === voice) staticTail = null; };
 };
 
 const playStatic = () => {
   stopStatic();
-  if (!audioCtx || staticBuffers.length === 0) return 0.15;
+  if (!audioCtx || staticBuffers.length === 0) return;
   if (audioCtx.state === 'suspended') audioCtx.resume();
   staticIndex = (staticIndex + 1) % staticBuffers.length;
   const buffer = staticBuffers[staticIndex];
-  if (!buffer) return 0.15;
+  if (!buffer) return;
   const source = audioCtx.createBufferSource();
   source.buffer = buffer;
   source.loop = true;
@@ -225,10 +236,8 @@ const playStatic = () => {
   source.connect(gain);
   gain.connect(staticGain);
   source.start();
-  const minDuration = Math.min(buffer.duration, STATIC_MIN_S);
-  staticVoice = { source, gain, minEnd: audioCtx.currentTime + minDuration };
+  staticVoice = { source, gain };
   staticSafety = setTimeout(() => { endTuning(); stopStatic(); }, STATIC_MAX_MS);
-  return minDuration;
 };
 
 // "Accord" de la station visée : le static ne s'arrête que quand sa lecture
@@ -265,7 +274,7 @@ const checkTuned = () => {
   if (el.currentTime - tuning.from >= TUNE_STEP_S) {
     endTuning();
     tunedAt = performance.now();
-    stopStatic(); // respecte la durée minimale du static
+    finishStatic(); // le static finit son passage en cours
   }
 };
 
