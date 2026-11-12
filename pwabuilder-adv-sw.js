@@ -8,7 +8,7 @@
 // rempli par offline.js (téléchargements pour écoute hors ligne).
 // Réécrit par scripts/stamp-version.js à chaque build (= numéro de build) :
 // chaque release change donc ce fichier, déclenchant la mise à jour du SW
-const CACHE_VERSION = '2026.11.13-0016';
+const CACHE_VERSION = '2026.11.13-0019';
 const STATIC_CACHE = 'static-' + CACHE_VERSION;
 // versionné : un cache d'images éternel servait les images modifiées
 // périmées pour toujours

@@ -187,8 +187,8 @@ const playUiSfx = (kind) => {
 };
 
 // Static de changement de station : UN passage complet de l'échantillon
-// (~1 s), jamais tronqué. La station démarre dessous (play() immédiat) et
-// monte en fondu dès qu'elle est accrochée (voir checkTuned / runFade).
+// (~1 s), jamais tronqué. La station démarre dessous, muette (play()
+// immédiat), et entre après (voir armEntry / openEntry).
 let staticVoice = null;
 
 // Coupure (pause, nouveau switch) : court fondu, tout de suite
@@ -220,47 +220,51 @@ const playStatic = () => {
   source.onended = () => { if (staticVoice === voice) staticVoice = null; };
 };
 
-// --- Fondu d'entrée de la station ------------------------------------------
-// Via el.volume : impossible sur iOS (volume en lecture seule, toujours 1),
-// où la station arrive donc à plein volume sous le static.
-const CAN_FADE = (() => {
-  try { const a = new Audio(); a.volume = 0.5; return Math.abs(a.volume - 0.5) < 0.01; }
-  catch (e) { return false; }
-})();
-const FADE_IN_MS = 800;
-let fade = null;       // { index, start } : start = null tant que pas accordée
-let fadeTimer = null;  // setInterval, pas rAF : continue onglet masqué
+// --- Entrée de la station après le static ----------------------------------
+// La station est lancée tout de suite (sous le static, pour gagner le temps
+// de chargement) mais MUETTE, puis entre d'un coup quand elle est accrochée
+// ET que le static a joué au moins STATION_ENTRY_S : le static s'entend
+// d'abord seul, comme en jeu. `muted` (contrairement à `volume`) est
+// réglable sur iOS. Bonus iOS : le bout de lecture à la mauvaise position
+// avant recalage reste inaudible.
+const STATION_ENTRY_S = 0.45;
+let entry = null;      // { index, notBefore }
+let entryTimer = null;
 
-// Annule le fondu et rend son volume normal à l'élément concerné
-const cancelFade = () => {
-  if (fadeTimer) { clearInterval(fadeTimer); fadeTimer = null; }
-  if (fade) { players[fade.index].volume = globalVolume; fade = null; }
+// Rend le son à la station en attente (fin normale ou annulation)
+const releaseEntry = () => {
+  if (entryTimer) { clearTimeout(entryTimer); entryTimer = null; }
+  if (entry) { players[entry.index].muted = false; entry = null; }
 };
 
-// Station muette jusqu'à l'accord (posé AVANT le play())
-const armFade = (index) => {
-  cancelFade();
-  if (!CAN_FADE) return;
-  fade = { index, start: null };
-  players[index].volume = 0;
+// Posé AVANT le play()
+const armEntry = (index) => {
+  releaseEntry();
+  entry = { index, notBefore: performance.now() + STATION_ENTRY_S * 1000 };
+  players[index].muted = true;
 };
 
-const runFade = (index) => {
-  if (!fade || fade.index !== index || fade.start !== null) return;
-  fade.start = performance.now();
-  fadeTimer = setInterval(() => {
-    const k = Math.min(1, (performance.now() - fade.start) / FADE_IN_MS);
-    // courbe en k² : montée perçue régulière (l'oreille est logarithmique)
-    players[fade.index].volume = globalVolume * k * k;
-    if (k >= 1) { clearInterval(fadeTimer); fadeTimer = null; fade = null; }
-  }, 20);
+// Appelé à l'accord
+const openEntry = (index) => {
+  if (!entry || entry.index !== index || entryTimer) return;
+  const token = playToken;
+  entryTimer = setTimeout(() => {
+    entryTimer = null;
+    releaseEntry();
+    // filet iOS : si le démute faisait mettre l'élément en pause (politique
+    // d'autoplay), on relance — avec le retry-au-geste en dernier recours
+    setTimeout(() => {
+      const el = players[index];
+      if (el.paused && token === playToken && index === currentStation) playStation(index);
+    }, 150);
+  }, Math.max(0, entry.notBefore - performance.now()));
 };
 
 // "Accord" de la station visée : elle n'est considérée accrochée que quand
 // sa lecture AVANCE réellement près de la position live — pas au simple
 // 'playing'. Sur iOS, 'playing' arrive avant le son audible, et souvent à la
 // mauvaise position (seek posé en pause ignoré, recalage qui rebufferise).
-// C'est l'accord qui déclenche le fondu d'entrée.
+// C'est l'accord qui déclenche l'entrée de la station.
 let tuning = null;      // { index, from } : from = 1re position vue en lecture
 let tuningTimer = null;
 let tunedAt = 0;        // instant de l'accord (rattrapage d'un décrochage)
@@ -283,7 +287,7 @@ const checkTuned = () => {
   const { index } = tuning;
   const el = players[index];
   if (index !== currentStation) { endTuning(); return; }
-  if (performance.now() - tuning.since > TUNE_MAX_MS) { endTuning(); cancelFade(); return; }
+  if (performance.now() - tuning.since > TUNE_MAX_MS) { endTuning(); releaseEntry(); return; }
   if (el.paused || el.seeking || el.readyState < 3 || liveDrift(index) > 2.5) {
     tuning.from = null;
     return;
@@ -292,7 +296,7 @@ const checkTuned = () => {
   if (el.currentTime - tuning.from >= TUNE_STEP_S) {
     endTuning();
     tunedAt = performance.now();
-    runFade(index);
+    openEntry(index);
   }
 };
 
@@ -315,8 +319,7 @@ const volumeValue = document.getElementById('volumeValue');
 const volumeSlider = document.getElementById('volumeSlider');
 
 const applyVolume = () => {
-  // l'élément en fondu suit globalVolume à chaque pas du fondu
-  players.forEach((el, i) => { if (!fade || fade.index !== i) el.volume = globalVolume; });
+  players.forEach(el => { el.volume = globalVolume; });
   if (staticGain) staticGain.gain.value = globalVolume;
 };
 
@@ -731,7 +734,7 @@ const playStation = (index) => {
     if (token !== playToken) return;
     endTuning();
     stopStatic();
-    cancelFade();
+    releaseEntry();
     // play() refusé (ex : switch déclenché par un pointercancel, donc hors
     // activation utilisateur) : retente au prochain geste — un seul retry
     // en attente à la fois
@@ -757,7 +760,7 @@ const pauseRadio = () => {
   clearGestureRetry();
   endTuning();
   stopStatic();
-  cancelFade();
+  releaseEntry();
   stopAll();
 };
 
@@ -772,9 +775,8 @@ const setStation = (index) => {
   // Coupure immédiate + static, et play() de la nouvelle station TOUT DE
   // SUITE, dans le geste : sur iOS, preload est ignoré — la requête ne part
   // qu'au play(), qui était différé de ~300 ms (fin du static minimal).
-  // La station démarre muette sous le static (un passage complet), puis
-  // monte en fondu dès qu'elle est réellement accrochée (voir checkTuned) —
-  // hors iOS, où le volume d'un <audio> n'est pas réglable.
+  // La station démarre muette sous le static, puis entre quand elle est
+  // réellement accrochée et que le static a joué seul un moment (armEntry).
   // PAS de play()+pause() de "bénédiction" ici : la course play→pause→play
   // peut laisser l'élément en pause sur iOS.
   stopAll();
@@ -782,7 +784,7 @@ const setStation = (index) => {
   // rafale compris) pour que la requête de la station visée parte sans attendre
   releaseIdle(index);
   playStatic();
-  armFade(index);
+  armEntry(index);
   startTuning(index);
   playStation(index);
 };
