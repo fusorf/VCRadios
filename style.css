@@ -27,7 +27,7 @@ body {
   left: 0;
   width: 100%;
   height: 100%;
-  background: #46414f url('logos/background.png');
+  background: #46414f url('logos/background.webp');
   background-size: 907px;
   touch-action: none;
   user-select: none;
@@ -82,7 +82,7 @@ body {
    (data-text) décalé derrière. */
 .txt-marble {
   position: relative;
-  background: url('logos/marble-pink.png');
+  background: url('logos/marble-pink.webp');
   background-size: 400px;
   background-clip: text;
   -webkit-background-clip: text;
@@ -193,7 +193,7 @@ body {
 /* Tuiles en quadrilatères irréguliers (clip-path posé en JS), même esprit
    que le masque : au survol, le polygone se re-déforme aléatoirement */
 .picker-tile {
-  background: #46414f url('logos/background.png');
+  background: #46414f url('logos/background.webp');
   background-size: 340px;
   border: none;
   cursor: pointer;
@@ -237,7 +237,7 @@ body {
   width: 44px;
   height: 44px;
   border: none;
-  background: #46414f url('logos/background.png');
+  background: #46414f url('logos/background.webp');
   background-size: 340px;
   cursor: pointer;
   transition: clip-path 0.35s ease, filter 0.2s ease;
@@ -267,7 +267,7 @@ body {
   width: 44px;
   height: 44px;
   border: none;
-  background: #46414f url('logos/background.png');
+  background: #46414f url('logos/background.webp');
   background-size: 340px;
   cursor: pointer;
   transition: clip-path 0.35s ease, filter 0.2s ease;
@@ -290,7 +290,7 @@ body {
   flex-direction: column;
   align-items: center;
   gap: 8px;
-  background: #46414f url('logos/background.png');
+  background: #46414f url('logos/background.webp');
   background-size: 340px;
   border: none;
   padding: 16px 14px;
@@ -453,7 +453,7 @@ body {
   min-height: 0;
   width: min(92vw, 560px);
   box-sizing: border-box;
-  background: #46414f url('logos/background.png');
+  background: #46414f url('logos/background.webp');
   background-size: 340px;
   padding: clamp(24px, 4.5vh, 40px) clamp(24px, 5vw, 40px);
 }
@@ -555,7 +555,7 @@ body {
   text-transform: uppercase;
   color: #FF98E1;
   text-shadow: 2px 2px 0 #1D201C;
-  background: #46414f url('logos/background.png');
+  background: #46414f url('logos/background.webp');
   background-size: 340px;
   border: none;
   cursor: pointer;
@@ -565,6 +565,22 @@ body {
 
 .offline-small-btn:hover {
   filter: brightness(1.25);
+}
+
+/* Numéro de build de débug : coin bas-gauche, minuscule et très atténué */
+#buildVersion {
+  position: fixed;
+  left: 8px;
+  bottom: calc(6px + env(safe-area-inset-bottom, 0px));
+  z-index: 96;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 9px;
+  letter-spacing: 0.3px;
+  color: #FF98E1;
+  opacity: 0.35;
 }
 
 /* croix de fermeture : slot habituel du bouton bas-droite (hors de la

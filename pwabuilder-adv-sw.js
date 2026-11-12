@@ -6,9 +6,13 @@
 // volontairement PAS interceptées ni mises en cache ici. Exception : les URLs
 // virtuelles same-origin /offline/*.mp3, servies depuis le cache RADIO_CACHE
 // rempli par offline.js (téléchargements pour écoute hors ligne).
-const CACHE_VERSION = 'v11';
+// Réécrit par scripts/stamp-version.js à chaque build (= numéro de build) :
+// chaque release change donc ce fichier, déclenchant la mise à jour du SW
+const CACHE_VERSION = '2026.11.12-1848';
 const STATIC_CACHE = 'static-' + CACHE_VERSION;
-const IMAGE_CACHE = 'images-cache';
+// versionné : un cache d'images éternel servait les images modifiées
+// périmées pour toujours
+const IMAGE_CACHE = 'images-' + CACHE_VERSION;
 // sans version : les stations téléchargées survivent aux bumps du shell
 const RADIO_CACHE = 'radio-offline';
 
@@ -20,6 +24,7 @@ const PRECACHE_FILES = [
   './app.js',
   './tracks.js',
   './offline.js',
+  './version.js',
   './manifest.json',
   './sfx/static1.mp3',
   './sfx/static2.mp3',
@@ -41,9 +46,9 @@ const PRECACHE_FILES = [
   './sfx/ui/cancel2.mp3',
   './fonts/Pricedown Bl.otf',
   './fonts/SF Arborcrest Medium.ttf',
-  './logos/background.png',
-  './logos/marble-pink.png',
-  './logos/logoVC.png',
+  './logos/background.webp',
+  './logos/marble-pink.webp',
+  './logos/logoVC.webp',
   './logos/Emotion98.3-GTAVC-Logo.webp',
   './logos/RadioEspantoso-GTAVC-Logo.webp',
   './logos/Fever_105.webp',
@@ -67,28 +72,34 @@ const PRECACHE_FILES = [
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(STATIC_CACHE)
-      .then(cache => cache.addAll(PRECACHE_FILES))
+      // cache: 'reload' : contourne le cache HTTP (GitHub Pages = max-age 600),
+      // sinon le précache d'une nouvelle version pouvait capturer d'anciens fichiers
+      .then(cache => cache.addAll(PRECACHE_FILES.map(url => new Request(url, { cache: 'reload' }))))
       .then(() => self.skipWaiting())
   );
 });
 
 self.addEventListener('activate', (event) => {
   const keep = [STATIC_CACHE, IMAGE_CACHE, RADIO_CACHE];
-  event.waitUntil(
-    caches.keys()
-      .then(names => Promise.all(
-        names.filter(name => !keep.includes(name)).map(name => caches.delete(name))
-      ))
-      .then(() => self.clients.claim())
-  );
+  event.waitUntil((async () => {
+    // Navigation preload : la requête de la page part pendant que le SW
+    // démarre, au lieu d'attendre son boot (gain de ~50-300 ms au lancement)
+    if (self.registration.navigationPreload) {
+      try { await self.registration.navigationPreload.enable(); } catch (e) {}
+    }
+    const names = await caches.keys();
+    await Promise.all(names.filter(name => !keep.includes(name)).map(name => caches.delete(name)));
+    await self.clients.claim();
+  })());
 });
 
 const cacheFirst = async (request, cacheName) => {
+  // le précache de la version courante d'abord (toujours à jour), puis le
+  // cache d'exécution
+  const precached = await (await caches.open(STATIC_CACHE)).match(request);
+  if (precached) return precached;
   const cache = await caches.open(cacheName);
-  // repli sur tous les caches : les logos vivent dans le précache statique,
-  // et le memory-cache de WebKit peut court-circuiter le SW au premier
-  // chargement, laissant images-cache vide
-  const cached = await cache.match(request) || await caches.match(request);
+  const cached = await cache.match(request);
   if (cached) return cached;
   try {
     const response = await fetch(request);
@@ -100,24 +111,66 @@ const cacheFirst = async (request, cacheName) => {
 };
 
 // L'app shell passe par le réseau d'abord (toujours frais et cohérent — un
-// mix vieux app.js / nouveau index.html casse tout), cache en secours offline.
-const networkFirst = async (request) => {
+// mix vieux app.js / nouveau index.html casse tout), cache en secours.
+// Réseau "lent mais pas coupé" (lie-fi) : sans délai max, le lancement
+// attendait l'échec du fetch (des dizaines de secondes). La NAVIGATION bascule
+// donc sur le cache après SHELL_TIMEOUT_MS ; pendant les 10 s qui suivent, ses
+// sous-ressources viennent aussi du cache (jamais de mélange de versions). Le
+// fetch réseau continue en fond et rafraîchit le cache pour le lancement suivant.
+const SHELL_TIMEOUT_MS = 3000;
+let preferCacheUntil = 0;
+
+const cachedShell = async (request) => {
   const cache = await caches.open(STATIC_CACHE);
-  try {
-    const response = await fetch(request);
-    if (response.ok) cache.put(request, response.clone());
-    return response;
-  } catch (e) {
-    // ignoreSearch : une navigation avec query (?dl=1...) doit retrouver le
-    // shell précaché sous "./" ; repli index.html pour toute navigation
-    const cached = await cache.match(request, { ignoreSearch: true });
-    if (cached) return cached;
-    if (request.mode === 'navigate') {
-      const shell = await cache.match('./index.html');
-      if (shell) return shell;
+  // ignoreSearch : une navigation avec query (?dl=1...) doit retrouver le
+  // shell précaché sous "./" ; repli index.html pour toute navigation
+  const cached = await cache.match(request, { ignoreSearch: true });
+  if (cached) return cached;
+  if (request.mode === 'navigate') return cache.match('./index.html');
+  return undefined;
+};
+
+const networkFirst = (event) => {
+  const request = event.request;
+  const isNav = request.mode === 'navigate';
+  let putDone = Promise.resolve();
+
+  const network = (async () => {
+    const preloaded = isNav ? await event.preloadResponse : undefined;
+    const response = preloaded || await fetch(request);
+    if (response.ok) {
+      const copy = response.clone();
+      putDone = caches.open(STATIC_CACHE).then(cache => cache.put(request, copy)).catch(() => {});
     }
-    return Response.error();
-  }
+    return response;
+  })();
+  // garde le SW en vie jusqu'à la mise en cache, même si le cache a répondu
+  event.waitUntil(network.then(() => putDone, () => {}));
+
+  return (async () => {
+    if (Date.now() < preferCacheUntil) {
+      const cached = await cachedShell(request);
+      if (cached) return cached;
+    }
+    let timer;
+    try {
+      if (!isNav) return await network;
+      const timeout = new Promise(resolve => { timer = setTimeout(resolve, SHELL_TIMEOUT_MS, 'timeout'); });
+      const winner = await Promise.race([network, timeout]);
+      if (winner !== 'timeout') return winner;
+      const cached = await cachedShell(request);
+      if (cached) {
+        preferCacheUntil = Date.now() + 10000;
+        return cached;
+      }
+      return await network;
+    } catch (e) {
+      const cached = await cachedShell(request);
+      return cached || Response.error();
+    } finally {
+      clearTimeout(timer);
+    }
+  })();
 };
 
 // Stations téléchargées : iOS/Safari envoie TOUJOURS "Range: bytes=0-" sur
@@ -132,14 +185,40 @@ const networkFirst = async (request) => {
 // lecture, identique au chemin streaming en ligne.
 const RADIO_CHUNK = 2 * 1024 * 1024;
 
-const offlineRadio = async (request) => {
-  const cache = await caches.open(RADIO_CACHE);
-  // match par URL et pas par Request : un header Range sur la requête peut
-  // faire échouer Cache.match selon les navigateurs
-  const cached = await cache.match(request.url);
-  if (!cached) return new Response('Gone', { status: 404 });
+// Blob mémorisé par URL (2 stations max, LRU) : sans ça, chaque requête
+// Range (tous les 2 Mo) refaisait cache.match + blob() sur un fichier de
+// 60-100 Mo — coûteux sur WebKit. blob.slice reste paresseux.
+const blobMemo = new Map();
+const BLOB_MEMO_MAX = 2;
 
-  const blob = await cached.blob();
+const getRadioBlob = (url) => {
+  const hit = blobMemo.get(url);
+  if (hit) {
+    blobMemo.delete(url);
+    blobMemo.set(url, hit); // remonte en tête LRU
+    return hit;
+  }
+  const pending = (async () => {
+    const cache = await caches.open(RADIO_CACHE);
+    // match par URL et pas par Request : un header Range sur la requête peut
+    // faire échouer Cache.match selon les navigateurs
+    const cached = await cache.match(url);
+    return cached ? cached.blob() : null;
+  })();
+  blobMemo.set(url, pending);
+  pending.then(blob => { if (!blob) blobMemo.delete(url); }, () => blobMemo.delete(url));
+  while (blobMemo.size > BLOB_MEMO_MAX) blobMemo.delete(blobMemo.keys().next().value);
+  return pending;
+};
+
+// offline.js prévient lors d'une purge : on oublie les Blobs mémorisés
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'radio-purged') blobMemo.clear();
+});
+
+const offlineRadio = async (request) => {
+  const blob = await getRadioBlob(request.url);
+  if (!blob) return new Response('Gone', { status: 404 });
   const size = blob.size;
   const rangeHeader = request.headers.get('range');
 
@@ -200,6 +279,6 @@ self.addEventListener('fetch', (event) => {
   } else if (event.request.destination === 'image') {
     event.respondWith(cacheFirst(event.request, IMAGE_CACHE));
   } else {
-    event.respondWith(networkFirst(event.request));
+    event.respondWith(networkFirst(event));
   }
 });

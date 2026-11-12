@@ -84,10 +84,13 @@ document.body.appendChild(audioPool);
 
 const players = stations.map(station => {
   const el = document.createElement('audio');
-  // métadonnées chargées pour les 9 stations (quelques centaines de Ko au
-  // total) : sans durée connue, un switch vers une station "froide" partirait
-  // du début du fichier au lieu de sa position live
-  el.preload = 'metadata';
+  // Rien n'est chargé tant qu'une station n'est pas jouée ou préparée
+  // (voisines) : les durées étant codées en dur, les métadonnées ne servent
+  // plus à rien, et preload="metadata" coûtait une requête "bytes=0-" (2 Mo
+  // côté Safari/Firefox) par station au chargement — ~18 Mo en concurrence
+  // avec le démarrage de la station choisie. Le seek posé avant chargement
+  // devient la "default playback start position", ré-assertée au canplay.
+  el.preload = 'none';
   el.loop = true;
   el.src = stationUrl(station);
   audioPool.appendChild(el);
@@ -152,7 +155,7 @@ const loadBuffer = (url, out) => {
   fetch(url)
     .then(r => r.arrayBuffer())
     .then(data => decodeCtx.decodeAudioData(data))
-    .then(buffer => out.push(buffer))
+    .then(buffer => { if (buffer) out.push(buffer); })
     .catch(() => {});
 };
 
@@ -180,16 +183,48 @@ const playUiSfx = (kind) => {
   source.start();
 };
 
-// Joue un static et renvoie sa durée en secondes
+// Static de changement de station : joué en BOUCLE jusqu'à ce que la station
+// visée démarre réellement ('playing'), comme en jeu — la mise en mémoire
+// tampon ne s'entend plus comme un blanc. Durée minimale = un static complet.
+// Renvoie la durée minimale du static, en secondes.
+let staticVoice = null;
+let staticSafety = null;
+const STATIC_MAX_MS = 8000; // jamais de grésillement infini (réseau mort)
+// Durée minimale du static avant que la station prenne le relais. Les
+// fichiers static durent ~1 s : attendre leur fin imposait ~900 ms de
+// latence à chaque switch, même vers une voisine déjà prête. Le static
+// bouclant jusqu'au 'playing', un switch "froid" reste masqué.
+const STATIC_MIN_S = 0.35;
+
+const stopStatic = () => {
+  if (staticSafety) { clearTimeout(staticSafety); staticSafety = null; }
+  if (!staticVoice || !audioCtx) { staticVoice = null; return; }
+  const { source, gain, minEnd } = staticVoice;
+  staticVoice = null;
+  const t = Math.max(audioCtx.currentTime, minEnd);
+  gain.gain.setValueAtTime(1, t);
+  gain.gain.linearRampToValueAtTime(0, t + 0.04);
+  try { source.stop(t + 0.05); } catch (e) {}
+};
+
 const playStatic = () => {
+  stopStatic();
   if (!audioCtx || staticBuffers.length === 0) return 0.15;
   if (audioCtx.state === 'suspended') audioCtx.resume();
   staticIndex = (staticIndex + 1) % staticBuffers.length;
+  const buffer = staticBuffers[staticIndex];
+  if (!buffer) return 0.15;
   const source = audioCtx.createBufferSource();
-  source.buffer = staticBuffers[staticIndex];
-  source.connect(staticGain);
+  source.buffer = buffer;
+  source.loop = true;
+  const gain = audioCtx.createGain();
+  source.connect(gain);
+  gain.connect(staticGain);
   source.start();
-  return source.buffer.duration;
+  const minDuration = Math.min(buffer.duration, STATIC_MIN_S);
+  staticVoice = { source, gain, minEnd: audioCtx.currentTime + minDuration };
+  staticSafety = setTimeout(stopStatic, STATIC_MAX_MS);
+  return minDuration;
 };
 
 // --- Contrôle du volume (même système que xeno-series-heardle) -------------
@@ -404,7 +439,6 @@ const currentTrack = () => {
   const list = STATION_TRACKS[stations[currentStation].file];
   if (!list) return null;
   const pos = livePosition(currentStation);
-  if (pos === null) return null;
   let current = null;
   for (const track of list) {
     if (track[0] <= pos) current = track; else break;
@@ -415,10 +449,15 @@ const currentTrack = () => {
 // Clé de l'artwork de notif (radio/EMOTION.mp3 -> EMOTION)
 const stationArtKey = (index) => stations[index].file.slice(6, -4);
 
+// N'écrit dans le DOM que si le texte change (appelé toutes les 2 s)
+const setTrackText = (text) => {
+  if (trackInfo.textContent !== text) trackInfo.textContent = text;
+};
+
 const updateTrackInfo = () => {
-  if (players[currentStation].paused) { trackInfo.textContent = ''; return; }
+  if (players[currentStation].paused) { setTrackText(''); return; }
   const track = currentTrack();
-  trackInfo.textContent = track ? `${track[1]} — ${track[2]}` : '';
+  setTrackText(track ? `${track[1]} — ${track[2]}` : '');
   // rafraîchit la notif quand le morceau change en cours de lecture
   const key = currentStation + '|' + (track ? track[1] : '');
   if (key !== lastMediaKey) updateMediaSessionMetadata();
@@ -430,12 +469,19 @@ let dragStartPos = 0;
 let dragLastX = 0;
 let dragLastT = 0;
 let dragVelocity = 0; // px/ms lissée
+let dragWidth = 1;    // largeur mise en cache au pointerdown (pas de lecture de layout par move)
+let dragMoved = false;
+let dragRenderPending = false;
+const DRAG_SLOP = 6;           // px : en dessous, c'est un tap
+const FLICK_STALE_MS = 100;    // doigt immobile avant relâcher = pas de flick
 
 container.addEventListener('pointerdown', e => {
   if (!started || pickerOpen() || returningToMenu) return;
   dragging = true;
+  dragMoved = false;
   container.setPointerCapture(e.pointerId);
   container.classList.add('dragging');
+  dragWidth = container.clientWidth || 1;
   dragStartX = e.clientX;
   dragStartPos = carouselPos;
   dragLastX = e.clientX;
@@ -451,16 +497,36 @@ container.addEventListener('pointermove', e => {
   if (dt > 0) dragVelocity = dragVelocity * 0.8 + ((e.clientX - dragLastX) / dt) * 0.2;
   dragLastX = e.clientX;
   dragLastT = now;
-  carouselPos = dragStartPos + (dragStartX - e.clientX) / container.clientWidth;
-  renderCarousel();
+  if (Math.abs(e.clientX - dragStartX) > DRAG_SLOP) dragMoved = true;
+  if (!dragMoved) return;
+  carouselPos = dragStartPos + (dragStartX - e.clientX) / dragWidth;
+  // les pointermove peuvent arriver plusieurs fois par frame (écrans/souris
+  // 120 Hz+) : un seul rendu par frame
+  if (!dragRenderPending) {
+    dragRenderPending = true;
+    requestAnimationFrame(() => {
+      dragRenderPending = false;
+      if (dragging) renderCarousel();
+    });
+  }
 });
 
 const endDrag = () => {
   if (!dragging) return;
   dragging = false;
   container.classList.remove('dragging');
+  // simple tap (y compris pendant l'easing d'un switch) : on garde la cible
+  // en cours au lieu d'arrondir la position intermédiaire, qui pouvait
+  // ramener à la station précédente
+  if (!dragMoved) {
+    carouselPos = dragStartPos;
+    goTo(carouselTarget);
+    return;
+  }
+  // doigt resté immobile avant le relâcher : la vitesse lissée est périmée
+  if (performance.now() - dragLastT > FLICK_STALE_MS) dragVelocity = 0;
   // vélocité en stations/s, positive vers la station suivante
-  const flick = -dragVelocity * 1000 / container.clientWidth;
+  const flick = -dragVelocity * 1000 / dragWidth;
   let target;
   if (Math.abs(flick) > 1.5) {
     target = flick > 0 ? Math.floor(carouselPos) + 1 : Math.ceil(carouselPos) - 1;
@@ -499,7 +565,7 @@ const setupMediaSession = () => {
   if (!('mediaSession' in navigator)) return;
   // "play" resynchronise sur la position live : une radio n'est jamais en pause
   navigator.mediaSession.setActionHandler('play', () => playStation(currentStation));
-  navigator.mediaSession.setActionHandler('pause', () => players[currentStation].pause());
+  navigator.mediaSession.setActionHandler('pause', () => pauseRadio());
   navigator.mediaSession.setActionHandler('previoustrack', () => step(-1));
   navigator.mediaSession.setActionHandler('nexttrack', () => step(1));
 };
@@ -509,13 +575,47 @@ const setupMediaSession = () => {
 // position live, le prochain switch part donc d'une zone déjà chargée.
 // Différé de 3 s après chaque lecture pour laisser toute la bande passante
 // au démarrage de la station courante.
+// Mode économie de données (Android "Économiseur de données", Chrome
+// "Lite") : pas de préchargement des voisines, qui triple sinon le débit
+// consommé (station écoutée + 2 voisines tenues à jour).
+const saveData = () => !!(navigator.connection && navigator.connection.saveData);
+
+const neighborsOf = (index) => [
+  mod(index + 1, stations.length),
+  mod(index - 1, stations.length)
+];
+
+// Chrome : un <audio> en pause qui a commencé à charger GARDE sa connexion
+// HTTP ouverte (lecture différée). Passé 6 connexions par hôte, la requête de
+// seek de la station visée reste en file d'attente : switch "froid" bloqué
+// indéfiniment sur le static (constaté en test). On libère donc tout lecteur
+// en pause hors station courante + voisines : réassigner src relance
+// l'algorithme de chargement (abandon de la requête) et preload="none"
+// n'en rouvre aucune. Le flag de bénédiction iOS est porté par l'élément,
+// pas par la source : il survit.
+const releasePlayer = (index) => {
+  const el = players[index];
+  if (!el.paused || el.src === SILENT_WAV) return;
+  const holdsNetwork = el.readyState > 0 || el.networkState === HTMLMediaElement.NETWORK_LOADING;
+  el.preload = 'none';
+  if (!holdsNetwork) return;
+  el.src = el.src;
+  seekIntents[index] = null;
+};
+
+const releaseIdle = (center) => {
+  const keep = [center, ...neighborsOf(center)];
+  players.forEach((_, index) => { if (!keep.includes(index)) releasePlayer(index); });
+};
+
 const warmNeighbors = () => {
-  const next = mod(currentStation + 1, stations.length);
-  const prev = mod(currentStation - 1, stations.length);
-  [next, prev].forEach(index => {
+  releaseIdle(currentStation);
+  if (saveData()) return;
+  neighborsOf(currentStation).forEach(index => {
     const el = players[index];
+    if (!el.paused) return;
     el.preload = 'auto';
-    if (el.paused) syncToLive(index);
+    syncToLive(index);
   });
 };
 
@@ -528,25 +628,56 @@ const scheduleWarm = () => {
   }, 3000);
 };
 
+// Jeton d'intention de lecture : incrémenté à chaque demande de lecture ET à
+// chaque pause explicite. Les relances différées (retry au geste, auto-
+// guérison réseau, play post-static) vérifient qu'aucune pause n'a eu lieu
+// depuis — sinon une pause depuis l'écran verrouillé pouvait être annulée
+// par le prochain tap dans l'app.
+let playToken = 0;
+let gestureRetry = null;
+
+const clearGestureRetry = () => {
+  if (!gestureRetry) return;
+  document.removeEventListener('pointerup', gestureRetry, true);
+  document.removeEventListener('keydown', gestureRetry, true);
+  gestureRetry = null;
+};
+
 const playStation = (index) => {
   const el = players[index];
+  const token = ++playToken;
+  clearGestureRetry();
+  el.preload = 'auto';
   syncToLive(index);
   el.play().catch(() => {
+    if (token !== playToken) return;
+    stopStatic();
     // play() refusé (ex : switch déclenché par un pointercancel, donc hors
-    // activation utilisateur) : retente au prochain geste
-    const retry = () => {
-      document.removeEventListener('pointerup', retry, true);
-      document.removeEventListener('keydown', retry, true);
-      if (index === currentStation) playStation(index);
+    // activation utilisateur) : retente au prochain geste — un seul retry
+    // en attente à la fois
+    clearGestureRetry();
+    gestureRetry = () => {
+      clearGestureRetry();
+      if (token === playToken && index === currentStation) playStation(index);
     };
-    document.addEventListener('pointerup', retry, true);
-    document.addEventListener('keydown', retry, true);
+    document.addEventListener('pointerup', gestureRetry, true);
+    document.addEventListener('keydown', gestureRetry, true);
   });
   scheduleWarm();
 };
 
 const stopAll = () => {
   players.forEach(el => { if (!el.paused) el.pause(); });
+};
+
+// Pause explicite (bouton pause du menu, Media Session) : annule aussi
+// toute relance différée en attente
+const pauseRadio = () => {
+  playToken++;
+  clearGestureRetry();
+  if (pendingSwitch) { clearTimeout(pendingSwitch); pendingSwitch = null; }
+  stopStatic();
+  stopAll();
 };
 
 const setStation = (index) => {
@@ -564,14 +695,24 @@ const setStation = (index) => {
   // final sur un pipeline lent — silence aléatoire constaté sur iOS). Le play
   // différé reste autorisé : WebKit propage l'activation utilisateur à
   // travers un setTimeout court, et le retry-au-geste couvre le reste.
+  // Le static boucle ensuite jusqu'au 'playing' de la station (voir
+  // stopStatic) : plus de blanc pendant la mise en mémoire tampon.
   stopAll();
+  // libère tout de suite les connexions des stations quittées (switchs en
+  // rafale compris) pour que la requête de la station visée parte sans attendre
+  releaseIdle(index);
   const staticDuration = playStatic();
+  // preload="auto" AVANT le seek : sur un élément jamais chargé, c'est ce qui
+  // lance la requête à la position live pendant le static
+  players[index].preload = 'auto';
   syncToLive(currentStation);
 
+  const token = ++playToken;
+  clearGestureRetry();
   if (pendingSwitch) clearTimeout(pendingSwitch);
   pendingSwitch = setTimeout(() => {
     pendingSwitch = null;
-    if (index === currentStation) playStation(index);
+    if (index === currentStation && token === playToken) playStation(index);
   }, Math.max(80, staticDuration * 1000 - 60));
 };
 
@@ -596,8 +737,10 @@ const blessAllPlayers = () => {
     if (p && p.catch) p.catch(() => {});
     setTimeout(() => {
       el.pause();
+      // preload="none" : restaurer la vraie source ne relance aucun
+      // téléchargement (avant : 8 requêtes de 2 Mo en plein démarrage)
+      el.preload = 'none';
       el.src = realSrc;
-      el.preload = 'metadata';
       syncToLive(index);
     }, 80);
   });
@@ -715,7 +858,7 @@ const updatePauseButton = () => {
 
 pauseButton.addEventListener('click', () => {
   playUiSfx('select');
-  stopAll();
+  pauseRadio();
   updatePauseButton();
   // plus rien ne joue : le titre de station et le morceau n'ont plus lieu d'être
   stationTitle.style.display = 'none';
@@ -759,10 +902,13 @@ updateMediaSessionMetadata();
 
 // Resynchronise les stations voisines en pause pour que le prochain switch
 // tombe dans une zone déjà bufferisée
+// (inutile écran éteint / onglet caché : le prochain switch passera de toute
+// façon par un seek, et ça évite de télécharger pour rien en arrière-plan)
 setInterval(() => {
-  const next = mod(currentStation + 1, stations.length);
-  const prev = mod(currentStation - 1, stations.length);
-  [next, prev].forEach(index => { if (players[index].paused) syncToLive(index); });
+  if (document.hidden || !started || saveData()) return;
+  neighborsOf(currentStation).forEach(index => {
+    if (players[index].paused && players[index].preload === 'auto') syncToLive(index);
+  });
 }, 15000);
 
 // Corrige la dérive après une mise en veille de l'onglet ou de l'appareil
@@ -787,12 +933,20 @@ const retryDelays = players.map(() => 0);
 players.forEach((el, index) => {
   el.addEventListener('playing', () => { retryDelays[index] = 0; });
   el.addEventListener('error', () => {
+    // élément jamais demandé (preload none, pas de lecture) : rien à réparer
+    if (el.preload === 'none' && el.paused) return;
     retryDelays[index] = Math.min(15000, retryDelays[index] ? retryDelays[index] * 2 : 1500);
+    // ne relancer la lecture que si elle était en cours au moment de l'erreur
+    // et qu'aucune pause explicite n'est intervenue depuis
+    const wasPlaying = !el.paused;
+    const token = playToken;
     setTimeout(() => {
       el.load();
-      if (index === currentStation && started) {
+      if (index === currentStation && started && wasPlaying && token === playToken) {
         syncToLive(index);
         el.play().catch(() => {});
+      } else {
+        syncToLive(index);
       }
     }, retryDelays[index]);
   });
@@ -819,6 +973,7 @@ players.forEach((el, index) => {
 
   el.addEventListener('playing', () => {
     if (index !== currentStation) return;
+    stopStatic(); // la station émet : fin du grésillement (après un passage min.)
     const intended = seekIntents[index];
     seekIntents[index] = null;
     if (intended !== null && Math.abs(el.currentTime - intended) > 2.5) {
@@ -843,7 +998,13 @@ setInterval(() => {
 setInterval(updateTrackInfo, 2000);
 
 // --- Clavier ---------------------------------------------------------------
+// Ignoré quand un champ a le focus (le slider de volume consomme déjà les
+// flèches : sinon volume ET station changeaient ensemble) et en auto-repeat
+// (touche maintenue = rafale de switchs, chacun lançant seek + requêtes)
 document.addEventListener('keydown', e => {
+  if (e.repeat || e.altKey || e.ctrlKey || e.metaKey) return;
+  const t = e.target;
+  if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
   if (e.key === 'ArrowRight') step(1);
   else if (e.key === 'ArrowLeft') step(-1);
 });

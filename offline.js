@@ -123,8 +123,9 @@ const swapNow = (index) => {
   // bénédiction iOS en vol (src = silence data-URI) : el.src sera restauré
   // par le bless, on retentera à la prochaine pause
   if (el.src === SILENT_WAV) { pendingSwap[index] = true; return; }
+  // garde le préchargement d'une voisine, sinon rien ne se charge avant lecture
+  el.preload = el.preload === 'auto' ? 'auto' : 'none';
   el.src = offlineUrl(stations[index]);
-  el.preload = 'metadata';
   syncToLive(index); // pose le seekIntent, ré-asserté au canplay par app.js
 };
 
@@ -134,8 +135,8 @@ const revertToNetwork = (index) => {
   pendingSwap[index] = false;
   if (el.src !== stationUrl(stations[index])) {
     const wasPlaying = !el.paused;
+    el.preload = el.preload === 'auto' ? 'auto' : 'none';
     el.src = stationUrl(stations[index]);
-    el.preload = 'metadata';
     if (wasPlaying && index === currentStation) playStation(index);
     else syncToLive(index);
   }
@@ -286,6 +287,9 @@ const cancelAll = () => {
 // --- Purge -----------------------------------------------------------------
 const purgeAll = async () => {
   cancelAll();
+  // le SW garde en mémoire le Blob de la station hors ligne en cours de
+  // lecture : on lui demande de l'oublier
+  try { navigator.serviceWorker.controller?.postMessage({ type: 'radio-purged' }); } catch (e) {}
   let cache;
   try { cache = await caches.open(RADIO_CACHE); } catch (e) { return; }
   for (let index = 0; index < stations.length; index++) {

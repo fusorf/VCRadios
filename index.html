@@ -28,7 +28,7 @@
       <path id="maskPath" fill-rule="evenodd" d="M0 0 H100 V100 H0 Z" />
     </svg>
     <header class="hud">
-      <img class="vc-logo" src="logos/logoVC.png" alt="Vice City" />
+      <img class="vc-logo" src="logos/logoVC.webp" width="900" height="476" alt="Vice City" />
       <h1 class="wordmark txt-marble" data-text="Vice City Radios">Vice City Radios</h1>
     </header>
     <div id="stationTitle"></div>
@@ -78,14 +78,22 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="#FF98E1" stroke-width="3" stroke-linecap="round" d="M6 6l12 12M18 6L6 18"/></svg>
       </button>
     </div>
+    <!-- Numéro de build de débug (date/heure), rempli par version.js -->
+    <div id="buildVersion" aria-hidden="true"></div>
     <script src="i18n.js"></script>
     <script src="tracks.js"></script>
     <script src="app.js"></script>
     <script src="offline.js"></script>
+    <script src="version.js"></script>
     <script>
+      // Enregistrement / vérif de mise à jour du SW différés de quelques
+      // secondes après le load : l'installation précharge ~1 Mo de fichiers,
+      // qui ne doit pas concurrencer le démarrage de la première station
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
-          navigator.serviceWorker.register('./pwabuilder-adv-sw.js');
+          setTimeout(() => {
+            navigator.serviceWorker.register('./pwabuilder-adv-sw.js').catch(() => {});
+          }, 4000);
         });
       }
     </script>
