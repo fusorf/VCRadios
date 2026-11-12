@@ -69,7 +69,6 @@ const loadLastStation = () => {
 // --- État ------------------------------------------------------------------
 let currentStation = loadLastStation();
 let started = false;
-let pendingSwitch = null;
 
 const container = document.querySelector('.container');
 
@@ -130,6 +129,10 @@ const syncToLive = (index, tolerance = 1.5) => {
 // créé qu'au premier geste : instancié avant interaction, il démarrerait
 // "suspended" avec un avertissement console.
 const AudioCtx = window.AudioContext || window.webkitAudioContext;
+// iOS : par défaut Web Audio est en catégorie "ambient", donc RENDU MUET par
+// le bouton silencieux — le static (et les SFX) devenait un blanc à chaque
+// switch. "playback" = même catégorie que les <audio> de la radio (iOS 17+).
+try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {}
 let audioCtx = null;
 let staticGain = null;
 const staticBuffers = [];
@@ -202,9 +205,10 @@ const stopStatic = () => {
   const { source, gain, minEnd } = staticVoice;
   staticVoice = null;
   const t = Math.max(audioCtx.currentTime, minEnd);
+  // fondu un peu long : le static se retire sous la musique qui démarre
   gain.gain.setValueAtTime(1, t);
-  gain.gain.linearRampToValueAtTime(0, t + 0.04);
-  try { source.stop(t + 0.05); } catch (e) {}
+  gain.gain.linearRampToValueAtTime(0, t + 0.15);
+  try { source.stop(t + 0.16); } catch (e) {}
 };
 
 const playStatic = () => {
@@ -223,8 +227,54 @@ const playStatic = () => {
   source.start();
   const minDuration = Math.min(buffer.duration, STATIC_MIN_S);
   staticVoice = { source, gain, minEnd: audioCtx.currentTime + minDuration };
-  staticSafety = setTimeout(stopStatic, STATIC_MAX_MS);
+  staticSafety = setTimeout(() => { endTuning(); stopStatic(); }, STATIC_MAX_MS);
   return minDuration;
+};
+
+// "Accord" de la station visée : le static ne s'arrête que quand sa lecture
+// AVANCE réellement près de la position live — pas au simple 'playing'.
+// Sur iOS, 'playing' arrive avant le son audible, et souvent à la mauvaise
+// position (seek posé en pause ignoré) : le recalage qui suit rebufferise,
+// et ce blanc n'était plus couvert par le static.
+let tuning = null;      // { index, from } : from = 1re position vue en lecture
+let tuningTimer = null;
+let tunedAt = 0;        // instant de l'accord (rattrapage d'un décrochage)
+const TUNE_STEP_S = 0.05;
+
+const endTuning = () => {
+  tuning = null;
+  if (tuningTimer) { clearInterval(tuningTimer); tuningTimer = null; }
+};
+
+const liveDrift = (index) => {
+  const el = players[index];
+  const delta = Math.abs(el.currentTime - livePosition(index));
+  return Math.min(delta, stations[index].duration - delta);
+};
+
+const checkTuned = () => {
+  if (!tuning) return;
+  const { index } = tuning;
+  const el = players[index];
+  if (index !== currentStation) { endTuning(); return; }
+  if (el.paused || el.seeking || el.readyState < 3 || liveDrift(index) > 2.5) {
+    tuning.from = null;
+    return;
+  }
+  if (tuning.from === null) { tuning.from = el.currentTime; return; }
+  if (el.currentTime - tuning.from >= TUNE_STEP_S) {
+    endTuning();
+    tunedAt = performance.now();
+    stopStatic(); // respecte la durée minimale du static
+  }
+};
+
+// currentTime est lu en direct (timeupdate, ~250 ms sur Safari, serait
+// trop lent) — le poll ne tourne que pendant un switch
+const startTuning = (index) => {
+  endTuning();
+  tuning = { index, from: null };
+  tuningTimer = setInterval(checkTuned, 30);
 };
 
 // --- Contrôle du volume (même système que xeno-series-heardle) -------------
@@ -651,6 +701,7 @@ const playStation = (index) => {
   syncToLive(index);
   el.play().catch(() => {
     if (token !== playToken) return;
+    endTuning();
     stopStatic();
     // play() refusé (ex : switch déclenché par un pointercancel, donc hors
     // activation utilisateur) : retente au prochain geste — un seul retry
@@ -675,7 +726,7 @@ const stopAll = () => {
 const pauseRadio = () => {
   playToken++;
   clearGestureRetry();
-  if (pendingSwitch) { clearTimeout(pendingSwitch); pendingSwitch = null; }
+  endTuning();
   stopStatic();
   stopAll();
 };
@@ -688,32 +739,21 @@ const setStation = (index) => {
   updateStationTitle();
   retargetMask();
 
-  // Coupure immédiate, static seul, puis la nouvelle station démarre à la fin
-  // du static. Le seek pendant le static remplit le buffer au bon endroit.
+  // Coupure immédiate + static, et play() de la nouvelle station TOUT DE
+  // SUITE, dans le geste : sur iOS, preload est ignoré — la requête ne part
+  // qu'au play(), qui était différé de ~300 ms (fin du static minimal).
+  // Le static boucle jusqu'à l'accord réel (voir checkTuned), avec une durée
+  // minimale : si la station est déjà prête, elle démarre sous le static,
+  // qui s'efface en fondu — la transition "accord" du jeu, sans blanc.
   // PAS de play()+pause() de "bénédiction" ici : la course play→pause→play
-  // peut laisser l'élément en pause (le pause interne se résout après le play
-  // final sur un pipeline lent — silence aléatoire constaté sur iOS). Le play
-  // différé reste autorisé : WebKit propage l'activation utilisateur à
-  // travers un setTimeout court, et le retry-au-geste couvre le reste.
-  // Le static boucle ensuite jusqu'au 'playing' de la station (voir
-  // stopStatic) : plus de blanc pendant la mise en mémoire tampon.
+  // peut laisser l'élément en pause sur iOS.
   stopAll();
   // libère tout de suite les connexions des stations quittées (switchs en
   // rafale compris) pour que la requête de la station visée parte sans attendre
   releaseIdle(index);
-  const staticDuration = playStatic();
-  // preload="auto" AVANT le seek : sur un élément jamais chargé, c'est ce qui
-  // lance la requête à la position live pendant le static
-  players[index].preload = 'auto';
-  syncToLive(currentStation);
-
-  const token = ++playToken;
-  clearGestureRetry();
-  if (pendingSwitch) clearTimeout(pendingSwitch);
-  pendingSwitch = setTimeout(() => {
-    pendingSwitch = null;
-    if (index === currentStation && token === playToken) playStation(index);
-  }, Math.max(80, staticDuration * 1000 - 60));
+  playStatic();
+  startTuning(index);
+  playStation(index);
 };
 
 // --- Déblocage iOS ---------------------------------------------------------
@@ -971,9 +1011,18 @@ players.forEach((el, index) => {
     }
   });
 
+  // Décrochage juste après l'accord (iOS lit souvent un premier fragment
+  // puis rebufferise) : le static reprend au lieu d'un blanc
+  el.addEventListener('waiting', () => {
+    if (index !== currentStation || el.paused || tuning) return;
+    if (performance.now() - tunedAt > 3000) return;
+    playStatic();
+    startTuning(index);
+  });
+
   el.addEventListener('playing', () => {
     if (index !== currentStation) return;
-    stopStatic(); // la station émet : fin du grésillement (après un passage min.)
+    // le static, lui, s'arrête à l'accord réel (checkTuned), pas ici
     const intended = seekIntents[index];
     seekIntents[index] = null;
     if (intended !== null && Math.abs(el.currentTime - intended) > 2.5) {
