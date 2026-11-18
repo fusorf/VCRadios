@@ -1160,8 +1160,9 @@ const updateMediaSessionMetadata = () => {
   }
   mediaMetaStation = currentStation;
   dbg(`meta new ${dbgName(currentStation)} "${title}"`);
-  // fond blanc OPAQUE : sur l'autoradio (iPod / CarPlay / Bluetooth) la
-  // transparence s'affichait en noir ou en artefacts
+  // PNG OPAQUE (camouflage + quadrilatère fixe sur noir, précalculé) : sur
+  // l'autoradio (iPod / CarPlay / Bluetooth) la transparence s'affichait en
+  // noir ou en artefacts
   const art = `logos/artwork/${stationArtKey(currentStation)}.png`;
   navigator.mediaSession.metadata = new MediaMetadata({
     title,
