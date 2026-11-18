@@ -45,20 +45,18 @@ const mod = (n, m) => ((n % m) + m) % m;
 const stationPath = (station) => station.src || station.file;
 const stationUrl = (station) => `${AUDIO_BASE_URL}/${stationPath(station)}`;
 
-// --- Mode "vraie web radio" -------------------------------------------------
-// Par défaut, une station en réseau est lue comme un FLUX EN DIRECT : le
-// Worker sert le fichier à partir de la position live (/live/…?t=secondes),
-// sans longueur ni Range. Le navigateur n'a donc ni durée ni barre de
-// progression à montrer : iOS (écran verrouillé, autoradio) affiche
-// l'interface "direct", ce que setPositionState(Infinity) n'obtenait pas (iOS
-// prend la durée de l'élément audio). La position est alors côté SERVEUR :
-// currentTime compte depuis le début du flux (voir filePosition), et se
-// recaler = rouvrir un flux, jamais un seek.
-// `?legacy` garde l'ancien mode (fichier /radio/ + seek côté client), pour
-// comparer et comme solution de repli.
+// --- Mode "vraie web radio" (opt-in : `?live`) ------------------------------
+// Une station en réseau peut être lue comme un FLUX EN DIRECT : le Worker
+// sert le fichier à partir de la position live (/live/…?t=secondes), sans
+// longueur ni Range. iOS affiche alors l'interface "direct" (ni durée ni
+// barre de progression), MAIS grise précédent/suivant sur l'écran verrouillé
+// et l'autoradio. Mode par défaut : fichier /radio/ + seek côté client,
+// identique sur toutes les plateformes. En mode direct, la position est côté
+// SERVEUR : currentTime compte depuis le début du flux (voir filePosition),
+// et se recaler = rouvrir un flux, jamais un seek.
 // Les stations téléchargées (offline.js) restent lues en fichier local avec
 // seek, dans les deux modes.
-const LIVE_MODE = !/[?&]legacy\b/.test(location.search);
+const LIVE_MODE = /[?&]live\b/.test(location.search);
 const liveUrl = (station) => `${AUDIO_BASE_URL}/live/${stationPath(station)}`;
 
 // Source d'un lecteur SANS sa query "?t=…" (flux en direct, voir startLive)
@@ -95,7 +93,7 @@ const dbgName = (index) => {
 // ligne d'état de la station courante, en tête de l'overlay
 const dbgState = () => {
   const el = players[currentStation];
-  return `${DEFER_PLAY ? 'defer' : 'muted'}${IS_IOS ? ' ios' : ''}${LIVE_MODE ? '' : ' legacy'} · ${dbgName(currentStation)}`
+  return `${DEFER_PLAY ? 'defer' : 'muted'}${IS_IOS ? ' ios' : ''}${LIVE_MODE ? ' live' : ''} · ${dbgName(currentStation)}`
     + ` ${el.paused ? 'PAUSED' : 'playing'}${el.muted ? ' MUTED' : ''}`
     + ` ${isLive(currentStation) ? 'live' : 'file'} @${filePosition(currentStation).toFixed(1)}`
     + ` rs${el.readyState} ns${el.networkState} drift ${liveDrift(currentStation).toFixed(1)}s`
