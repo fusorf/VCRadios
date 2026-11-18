@@ -18,15 +18,15 @@ const AUDIO_BASE_URL = 'https://vcradios-audio.fusorf.workers.dev';
 // live est calculable immédiatement, avant toute métadonnée, et identique
 // sur tous les appareils.
 const stations = [
-  { name: "Emotion 98.3", file: "radio/EMOTION.mp3", logo: "logos/Emotion98.3-GTAVC-Logo.webp", duration: 3546.828 },
-  { name: "Radio Espantoso", file: "radio/ESPANT.mp3", logo: "logos/RadioEspantoso-GTAVC-Logo.webp", duration: 3698.233 },
-  { name: "Fever 105", file: "radio/FEVER.mp3", logo: "logos/Fever_105.webp", duration: 3793.189 },
-  { name: "Flash FM", file: "radio/FLASH.mp3", logo: "logos/FlashFM.webp", duration: 3587.840 },
+  { name: "Emotion 98.3", file: "radio/EMOTION.mp3", src: "radio/v2/EMOTION.mp3", logo: "logos/Emotion98.3-GTAVC-Logo.webp", duration: 3546.828 },
+  { name: "Radio Espantoso", file: "radio/ESPANT.mp3", src: "radio/v2/ESPANT.mp3", logo: "logos/RadioEspantoso-GTAVC-Logo.webp", duration: 3698.233 },
+  { name: "Fever 105", file: "radio/FEVER.mp3", src: "radio/v2/FEVER.mp3", logo: "logos/Fever_105.webp", duration: 3793.189 },
+  { name: "Flash FM", file: "radio/FLASH.mp3", src: "radio/v2/FLASH.mp3", logo: "logos/FlashFM.webp", duration: 3587.840 },
   { name: "K-Chat", file: "radio/KCHAT.mp3", logo: "logos/KChat-GTAVC-Logo.webp", duration: 6235.668 },
   { name: "VCPR", file: "radio/VCPR.mp3", logo: "logos/ViceCityPublicRadio-GTAVC-Logo.svg", duration: 5184.252 },
-  { name: "V-Rock", file: "radio/VROCK.mp3", logo: "logos/V-Rock-GTAVC-Logo.svg", duration: 4644.232 },
-  { name: "Wave 103", file: "radio/WAVE.mp3", logo: "logos/Wave103-GTAVC-Logo.svg", duration: 3966.772 },
-  { name: "Wildstyle", file: "radio/WILD.mp3", logo: "logos/WildstylePirateRadio.webp", duration: 4107.207 }
+  { name: "V-Rock", file: "radio/VROCK.mp3", src: "radio/v2/VROCK.mp3", logo: "logos/V-Rock-GTAVC-Logo.svg", duration: 4644.232 },
+  { name: "Wave 103", file: "radio/WAVE.mp3", src: "radio/v2/WAVE.mp3", logo: "logos/Wave103-GTAVC-Logo.svg", duration: 3966.772 },
+  { name: "Wildstyle", file: "radio/WILD.mp3", src: "radio/v2/WILD.mp3", logo: "logos/WildstylePirateRadio.webp", duration: 4107.207 }
 ];
 
 const STATIC_SOUNDS = [
@@ -37,7 +37,13 @@ const STATIC_SOUNDS = [
 
 const mod = (n, m) => ((n % m) + m) % m;
 
-const stationUrl = (station) => `${AUDIO_BASE_URL}/${station.file}`;
+// `file` = identité de la station (décalage live, tracklist, clés hors ligne) ;
+// `src` = fichier réellement servi quand il diffère. radio/v2/ : MP3 du jeu
+// dont les trames que le décodeur de Chrome rejette (« part2_3_length is not
+// valid », erreur de lecture au démarrage) ont été réencodées et raccordées
+// sur place — même taille, mêmes trames, même timing.
+const stationPath = (station) => station.src || station.file;
+const stationUrl = (station) => `${AUDIO_BASE_URL}/${stationPath(station)}`;
 
 // --- Mode "vraie web radio" -------------------------------------------------
 // Par défaut, une station en réseau est lue comme un FLUX EN DIRECT : le
@@ -53,7 +59,7 @@ const stationUrl = (station) => `${AUDIO_BASE_URL}/${station.file}`;
 // Les stations téléchargées (offline.js) restent lues en fichier local avec
 // seek, dans les deux modes.
 const LIVE_MODE = !/[?&]legacy\b/.test(location.search);
-const liveUrl = (station) => `${AUDIO_BASE_URL}/live/${station.file}`;
+const liveUrl = (station) => `${AUDIO_BASE_URL}/live/${stationPath(station)}`;
 
 // Source d'un lecteur SANS sa query "?t=…" (flux en direct, voir startLive)
 // ni son fragment "#t=…" (voir armStartFragment) : toute comparaison de
