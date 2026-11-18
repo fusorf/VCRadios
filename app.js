@@ -39,6 +39,10 @@ const mod = (n, m) => ((n % m) + m) % m;
 
 const stationUrl = (station) => `${AUDIO_BASE_URL}/${station.file}`;
 
+// Source d'un lecteur SANS son fragment "#t=…" (voir armStartFragment) :
+// toute comparaison de el.src avec stationUrl() / offlineUrl() passe par là.
+const srcBase = (el) => el.src.split('#')[0];
+
 const IS_IOS = /iP(hone|ad|od)/.test(navigator.userAgent)
   || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
@@ -317,6 +321,36 @@ const syncToLive = (index, tolerance = 1.5) => {
     // seuls les recalages d'un lecteur qui joue intéressent le journal
     if (!el.paused) dbg(`${dbgName(index)} resync ${drift.toFixed(1)}s`);
   }
+};
+
+// iOS (DEFER_PLAY) : position de départ portée par l'URL ("media fragment"
+// #t=secondes), posée juste avant chaque play(). Un seek JS, même posé au
+// 'loadedmetadata', arrive trop tard sur iOS : le moteur a déjà sorti
+// quelques ms depuis 0 (entendu sur station froide). Le fragment, lui, est
+// appliqué PAR LE MOTEUR pendant le chargement, sans attendre un handler.
+// Réassigner src relance le chargement : l'élément repart toujours à froid,
+// donc par le même chemin (station froide, préchargée, reprise après pause).
+// La position vise l'instant probable du premier son : live + START_LEAD_S
+// (délai play() → son mesuré à 0,1–0,3 s ; un écart résiduel < 1,5 s est
+// dans la tolérance des recalages).
+// Filets conservés : currentTime posé ici (position de départ par défaut),
+// seek au 'loadedmetadata', recalage au 'playing'.
+// `force` : même si l'élément n'est pas en pause (relance après erreur).
+const START_LEAD_S = 0.3;
+const startArmedAt = stations.map(() => 0);
+
+const armStartFragment = (index, force = false) => {
+  const el = players[index];
+  if (!DEFER_PLAY || (!el.paused && !force)) return false;
+  const base = srcBase(el);
+  if (base.startsWith('data:')) return false; // bénédiction iOS en vol
+  const pos = mod(livePosition(index) + START_LEAD_S, stations[index].duration);
+  el.src = `${base}#t=${pos.toFixed(2)}`;
+  el.currentTime = pos;
+  seekIntents[index] = pos;
+  startArmedAt[index] = performance.now();
+  dbg(`${dbgName(index)} start #t=${pos.toFixed(1)}`);
+  return true;
 };
 
 // --- Statics via Web Audio (décodés une fois, déclenchement instantané) ----
@@ -1057,7 +1091,7 @@ const releasePlayer = (index) => {
   const holdsNetwork = el.readyState > 0 || el.networkState === HTMLMediaElement.NETWORK_LOADING;
   el.preload = 'none';
   if (!holdsNetwork) return;
-  el.src = el.src;
+  el.src = srcBase(el);
   seekIntents[index] = null;
 };
 
@@ -1078,7 +1112,8 @@ const releaseAllButCurrent = () => {
 const warmNeighbors = () => {
   if (document.hidden) { releaseAllButCurrent(); return; }
   releaseIdle(currentStation);
-  if (saveData()) return;
+  // iOS : chaque démarrage réassigne src (#t=), le tampon préchargé serait jeté
+  if (saveData() || DEFER_PLAY) return;
   neighborsOf(currentStation).forEach(index => {
     const el = players[index];
     if (!el.paused) return;
@@ -1118,22 +1153,9 @@ const playStation = (index) => {
   const token = ++playToken;
   clearGestureRetry();
   el.preload = 'auto';
-  // iOS (DEFER_PLAY) : un élément en pause DÉJÀ chargé mais loin de la
-  // position live (reprise après pause, station re-visitée) rejouerait
-  // d'abord quelques ms à son ancienne position — le seek posé en pause y
-  // est ignoré, et le recalage n'arrive qu'au 'playing', donc trop tard :
-  // on l'entend. On le repart À FROID (rechargement) : plus aucune donnée
-  // jouable tant que les métadonnées ne sont pas revenues, moment où le
-  // seek est ré-asserté ('loadedmetadata'), avant tout son.
-  // Pas sous le static au premier plan : il couvre l'entrée, et on garde le
-  // bénéfice des voisines préchargées.
-  if (DEFER_PLAY && el.paused && el.readyState > 0 && el.src !== SILENT_WAV
-      && (document.hidden || staticVoice === null) && liveDrift(index) > 1.5) {
-    dbg(`${dbgName(index)} cold start (was @${el.currentTime.toFixed(1)})`);
-    el.src = el.src;
-    seekIntents[index] = null;
-  }
-  syncToLive(index);
+  // iOS : position de départ dans l'URL (armStartFragment) ; ailleurs, ou
+  // si l'élément joue déjà, simple recalage
+  if (!armStartFragment(index)) syncToLive(index);
   el.play().catch(() => {
     if (token !== playToken) return;
     endTuning();
@@ -1257,7 +1279,7 @@ const blessAllPlayers = () => {
   dbg('bless players');
   players.forEach((el, index) => {
     if (index === currentStation) return; // la station courante joue dans le geste
-    const realSrc = el.src;
+    const realSrc = srcBase(el);
     el.src = SILENT_WAV;
     const p = el.play();
     if (p && p.catch) p.catch(() => {});
@@ -1546,8 +1568,12 @@ players.forEach((el, index) => {
       const resume = index === currentStation && started
         && (!el.paused || (wasPlaying && token === playToken));
       dbg(`${dbgName(index)} error retry${resume ? ' + play' : ''}`);
-      el.load();
-      syncToLive(index);
+      // iOS : nouvelle source à fragment frais (= rechargement), sinon
+      // load() repartirait sur le #t= périmé du dernier démarrage
+      if (!armStartFragment(index, true)) {
+        el.load();
+        syncToLive(index);
+      }
       if (resume) el.play().catch(() => {});
     });
   });
@@ -1575,8 +1601,12 @@ players.forEach((el, index) => {
     // puis repris aussitôt ne repasse pas par ici
     if (intended === null) return;
     if (!DEFER_PLAY && Math.abs(el.currentTime - intended) <= 2.5) return;
-    const pos = livePosition(index);
-    dbg(`${dbgName(index)} metadata @${el.currentTime.toFixed(1)} → seek ${pos.toFixed(1)}`);
+    // même cible que le fragment : le reste de l'avance START_LEAD_S
+    const lead = Math.max(0, START_LEAD_S - (performance.now() - startArmedAt[index]) / 1000);
+    const pos = mod(livePosition(index) + (DEFER_PLAY ? lead : 0), stations[index].duration);
+    // journal : station courante seulement (les voisines préchargées
+    // passent ici toutes les 15 s)
+    if (index === currentStation) dbg(`${dbgName(index)} metadata @${el.currentTime.toFixed(1)} → seek ${pos.toFixed(1)}`);
     el.currentTime = pos;
     seekIntents[index] = pos;
   });

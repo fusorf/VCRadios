@@ -178,7 +178,7 @@ const swapNow = (index) => {
 const revertToNetwork = (index) => {
   const el = players[index];
   pendingSwap[index] = false;
-  if (el.src !== stationUrl(stations[index])) {
+  if (srcBase(el) !== stationUrl(stations[index])) {
     const wasPlaying = !el.paused;
     el.preload = el.preload === 'auto' ? 'auto' : 'none';
     el.src = stationUrl(stations[index]);
@@ -191,7 +191,7 @@ const applyOfflineSources = () => {
   if (!swCanServe()) return;
   stations.forEach((station, index) => {
     if (dlState[index].status !== 'done') return;
-    if (players[index].src === offlineUrl(station)) return;
+    if (srcBase(players[index]) === offlineUrl(station)) return;
     if (players[index].paused) swapNow(index);
     else pendingSwap[index] = true;
   });
@@ -206,7 +206,7 @@ const takeOver = (index, wasPlaying) => {
   const el = players[index];
   const station = stations[index];
   if (dlState[index].status !== 'done' || !swCanServe()) return false;
-  if (el.src === offlineUrl(station) || el.src === SILENT_WAV) return false;
+  if (srcBase(el) === offlineUrl(station) || el.src === SILENT_WAV) return false;
   pendingSwap[index] = false;
   swapNow(index);
   if (wasPlaying && started && index === currentStation) playStation(index);
@@ -511,7 +511,7 @@ const purgeAll = async () => {
   // demande de l'oublier
   try { navigator.serviceWorker.controller?.postMessage({ type: 'radio-purged' }); } catch (e) {}
   for (let index = 0; index < stations.length; index++) {
-    if (players[index].src === offlineUrl(stations[index])) revertToNetwork(index);
+    if (srcBase(players[index]) === offlineUrl(stations[index])) revertToNetwork(index);
     pendingSwap[index] = false;
     resetState(index);
     renderRow(index);

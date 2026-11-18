@@ -8,7 +8,7 @@
 // rempli par offline.js (téléchargements pour écoute hors ligne).
 // Réécrit par scripts/stamp-version.js à chaque build (= numéro de build) :
 // chaque release change donc ce fichier, déclenchant la mise à jour du SW
-const CACHE_VERSION = '2026.11.18-1716';
+const CACHE_VERSION = '2026.11.18-1743';
 const STATIC_CACHE = 'static-' + CACHE_VERSION;
 // versionné : un cache d'images éternel servait les images modifiées
 // périmées pour toujours
@@ -277,7 +277,9 @@ const chunkedRadio = async (cache, url, manifest, rangeHeader) => {
 };
 
 const offlineRadio = async (request) => {
-  const url = request.url.split('?')[0];
+  // sans query NI fragment : request.url garde le "#t=…" que l'app pose sur
+  // la source des lecteurs (position de départ), les clés du cache non
+  const url = request.url.split(/[?#]/)[0];
   const rangeHeader = request.headers.get('range');
   const cache = await caches.open(RADIO_CACHE);
   const manifestHit = await cache.match(url + '.json');
