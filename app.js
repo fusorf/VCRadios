@@ -39,9 +39,26 @@ const mod = (n, m) => ((n % m) + m) % m;
 
 const stationUrl = (station) => `${AUDIO_BASE_URL}/${station.file}`;
 
-// Source d'un lecteur SANS son fragment "#t=…" (voir armStartFragment) :
-// toute comparaison de el.src avec stationUrl() / offlineUrl() passe par là.
-const srcBase = (el) => el.src.split('#')[0];
+// --- Mode "vraie web radio" -------------------------------------------------
+// Par défaut, une station en réseau est lue comme un FLUX EN DIRECT : le
+// Worker sert le fichier à partir de la position live (/live/…?t=secondes),
+// sans longueur ni Range. Le navigateur n'a donc ni durée ni barre de
+// progression à montrer : iOS (écran verrouillé, autoradio) affiche
+// l'interface "direct", ce que setPositionState(Infinity) n'obtenait pas (iOS
+// prend la durée de l'élément audio). La position est alors côté SERVEUR :
+// currentTime compte depuis le début du flux (voir filePosition), et se
+// recaler = rouvrir un flux, jamais un seek.
+// `?legacy` garde l'ancien mode (fichier /radio/ + seek côté client), pour
+// comparer et comme solution de repli.
+// Les stations téléchargées (offline.js) restent lues en fichier local avec
+// seek, dans les deux modes.
+const LIVE_MODE = !/[?&]legacy\b/.test(location.search);
+const liveUrl = (station) => `${AUDIO_BASE_URL}/live/${station.file}`;
+
+// Source d'un lecteur SANS sa query "?t=…" (flux en direct, voir startLive)
+// ni son fragment "#t=…" (voir armStartFragment) : toute comparaison de
+// el.src avec stationUrl() / liveUrl() / offlineUrl() passe par là.
+const srcBase = (el) => el.src.split(/[?#]/)[0];
 
 const IS_IOS = /iP(hone|ad|od)/.test(navigator.userAgent)
   || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
@@ -72,8 +89,9 @@ const dbgName = (index) => {
 // ligne d'état de la station courante, en tête de l'overlay
 const dbgState = () => {
   const el = players[currentStation];
-  return `${DEFER_PLAY ? 'defer' : 'muted'}${IS_IOS ? ' ios' : ''} · ${dbgName(currentStation)}`
+  return `${DEFER_PLAY ? 'defer' : 'muted'}${IS_IOS ? ' ios' : ''}${LIVE_MODE ? '' : ' legacy'} · ${dbgName(currentStation)}`
     + ` ${el.paused ? 'PAUSED' : 'playing'}${el.muted ? ' MUTED' : ''}`
+    + ` ${isLive(currentStation) ? 'live' : 'file'} @${filePosition(currentStation).toFixed(1)}`
     + ` rs${el.readyState} ns${el.networkState} drift ${liveDrift(currentStation).toFixed(1)}s`
     + ` · tok ${playToken}${tuning ? ' tuning' : ''}${entry ? ' entry' : ''}`
     + ` · ctx ${audioCtx ? audioCtx.state : '-'}`
@@ -256,8 +274,11 @@ const players = stations.map(station => {
   // avec le démarrage de la station choisie. Le seek posé avant chargement
   // devient la "default playback start position", ré-assertée au canplay.
   el.preload = 'none';
-  el.loop = true;
-  el.src = stationUrl(station);
+  // Mode direct : AUCUNE source au repos — le flux est ouvert au moment de
+  // la lecture (startLive), et un flux ne boucle pas (fin de fichier →
+  // 'ended' → nouveau flux à la position live, qui a rebouclé).
+  el.loop = !LIVE_MODE;
+  if (!LIVE_MODE) el.src = stationUrl(station);
   audioPool.appendChild(el);
   return el;
 });
@@ -281,7 +302,7 @@ players.forEach((el, index) => {
   };
   ['playing', 'pause', 'waiting', 'stalled'].forEach(type => {
     el.addEventListener(type, () => dbg(type === 'playing'
-      ? `${name} playing @${el.currentTime.toFixed(1)} (live ${livePosition(index).toFixed(1)})`
+      ? `${name} playing @${filePosition(index).toFixed(1)} (live ${livePosition(index).toFixed(1)})`
       : `${name} ${type}`));
   });
   el.addEventListener('error', () => dbg(`${name} error ${el.error ? el.error.code : '?'}`));
@@ -298,6 +319,92 @@ const livePosition = (index) => {
   return mod(elapsed, stations[index].duration);
 };
 
+// --- Flux en direct : état par lecteur ---------------------------------------
+// Un lecteur est "live" quand sa source est un flux /live/ : la position
+// dans le fichier n'est plus currentTime (qui compte depuis le début du
+// flux) mais liveStart + currentTime. Déduit de el.src : toujours juste,
+// même quand offline.js change la source de son côté.
+const liveStart = stations.map(() => 0);        // position fichier du début du flux
+const liveStartedAt = stations.map(() => 0);    // performance.now() à l'ouverture
+const liveAwaitingPlay = stations.map(() => false); // 1er 'playing' pas encore vu
+
+const isLive = (index) => srcBase(players[index]) === liveUrl(stations[index]);
+
+// source locale = station téléchargée (offline/KEY.mp3, servie par le SW)
+const isLocalSrc = (el) => el.src.startsWith(location.origin + '/');
+
+// Cette station doit-elle être lue en flux direct ? Oui en mode direct, sauf
+// si elle est posée sur sa copie hors ligne.
+const usesLive = (index) => LIVE_MODE && !isLocalSrc(players[index]);
+
+// POSITION DANS LE FICHIER de ce qu'un lecteur joue : toutes les mesures de
+// dérive et de position passent par là, jamais par currentTime directement.
+const filePosition = (index) => {
+  const el = players[index];
+  return isLive(index)
+    ? mod(liveStart[index] + el.currentTime, stations[index].duration)
+    : el.currentTime;
+};
+
+// Vide un lecteur : sans source, la requête en cours (flux en direct =
+// requête longue) est abandonnée tout de suite, et il n'a plus rien à jouer.
+// removeAttribute + load() : pas d'événement 'error', contrairement à src="".
+const clearSrc = (el) => {
+  el.removeAttribute('src');
+  try { el.load(); } catch (e) {}
+};
+
+// Source réseau d'un lecteur au repos (utilisé aussi par offline.js) : le
+// fichier en mode legacy, rien en mode direct.
+const onNetworkSrc = (index) => LIVE_MODE
+  ? !isLocalSrc(players[index])
+  : srcBase(players[index]) === stationUrl(stations[index]);
+
+const setNetworkSrc = (index) => {
+  if (LIVE_MODE) clearSrc(players[index]);
+  else players[index].src = stationUrl(stations[index]);
+};
+
+// Avance prise sur la position live à l'ouverture d'un flux : vise l'instant
+// probable du premier son. Ajustée à chaque démarrage sur le délai réellement
+// mesuré (ouverture → 'playing'), bornée : un réseau lent démarre ainsi près
+// du direct au lieu d'accumuler son temps de chargement en retard.
+const LIVE_LEAD_MIN_S = 0.3;
+const LIVE_LEAD_MAX_S = 3;
+let liveLead = 0.5;
+// Retard au-delà duquel un flux est rouvert à la position live (après un
+// décrochage réseau, une pause subie...) ; en dessous, on laisse jouer :
+// rouvrir un flux coûte un blanc.
+const LIVE_RESYNC_S = 3;
+// pas de réouverture automatique dans les 10 s qui suivent une ouverture :
+// sur un réseau très lent, chaque réouverture serait elle-même en retard
+const LIVE_RESTART_MIN_MS = 10000;
+
+// flux de la station courante sans donnée jouable depuis... (voir le poll 4 s)
+const LIVE_STALL_MS = 12000;
+let liveStallSince = 0;
+
+// Ouvre un flux en direct sur la position live (nouvelle source = nouvelle
+// requête ; l'ancienne est abandonnée). L'appelant enchaîne sur play().
+const startLive = (index, why = '') => {
+  const el = players[index];
+  const pos = Math.round(mod(livePosition(index) + liveLead, stations[index].duration) * 100) / 100;
+  liveStart[index] = pos;
+  liveStartedAt[index] = performance.now();
+  liveAwaitingPlay[index] = true;
+  seekIntents[index] = null;
+  el.loop = false;
+  el.preload = 'auto';
+  el.src = `${liveUrl(stations[index])}?t=${pos.toFixed(2)}`;
+  dbg(`${dbgName(index)} live start t=${pos.toFixed(1)}${why ? ` (${why})` : ''}`);
+};
+
+// Rouvre le flux d'un lecteur qui joue (recalage, fin de fichier)
+const restartLive = (index, why) => {
+  startLive(index, why);
+  players[index].play().catch(() => {});
+};
+
 // Cible du dernier seek demandé par élément. WebKit (iOS) peut ignorer
 // silencieusement un seek posé sur un élément en pause (le getter currentTime
 // renvoie pourtant la nouvelle valeur) et reprendre la lecture à l'ancienne
@@ -308,8 +415,20 @@ const seekIntents = stations.map(() => null);
 // Recale un lecteur sur sa position "live". Distance circulaire : au moment où
 // le fichier boucle, currentTime et la position live sont aux deux extrémités
 // du fichier sans être réellement désynchronisés.
-const syncToLive = (index, tolerance = 1.5) => {
+// Flux en direct : pas de seek possible — au-delà de LIVE_RESYNC_S de retard
+// le flux est rouvert (`tolerance` ne concerne que les fichiers). Un flux en
+// pause n'est pas touché : sa reprise passe par playStation ou par
+// l'événement 'play' (`resumed`), qui le rouvrent.
+const syncToLive = (index, tolerance = 1.5, resumed = false) => {
   const el = players[index];
+  if (isLive(index)) {
+    if (el.paused) return;
+    const lag = liveDrift(index);
+    if (lag <= LIVE_RESYNC_S) return;
+    if (!resumed && performance.now() - liveStartedAt[index] < LIVE_RESTART_MIN_MS) return;
+    restartLive(index, `resync ${lag.toFixed(1)}s`);
+    return;
+  }
   const pos = livePosition(index);
   const delta = Math.abs(el.currentTime - pos);
   const drift = Math.min(delta, stations[index].duration - delta);
@@ -343,7 +462,8 @@ const armStartFragment = (index, force = false) => {
   const el = players[index];
   if (!DEFER_PLAY || (!el.paused && !force)) return false;
   const base = srcBase(el);
-  if (base.startsWith('data:')) return false; // bénédiction iOS en vol
+  // bénédiction iOS en vol, ou lecteur sans source
+  if (!base || el.src.startsWith('data:')) return false;
   const pos = mod(livePosition(index) + START_LEAD_S, stations[index].duration);
   el.src = `${base}#t=${pos.toFixed(2)}`;
   el.currentTime = pos;
@@ -600,9 +720,18 @@ const endTuning = () => {
 
 const liveDrift = (index) => {
   const el = players[index];
-  const delta = Math.abs(el.currentTime - livePosition(index));
+  const delta = Math.abs(filePosition(index) - livePosition(index));
   return Math.min(delta, stations[index].duration - delta);
 };
+
+// Écart maximal à la position live pour considérer la station accrochée.
+// Fichier : 2,5 s (au-delà, le seek n'a pas été appliqué). Flux en direct :
+// le serveur a forcément servi la bonne position, l'écart n'est que du
+// retard de chargement — on laisse entrer la station (le recalage rouvrira
+// le flux si besoin) plutôt que de la garder muette ; seul un vieux flux
+// repris depuis son tampon est écarté.
+const TUNE_DRIFT_FILE_S = 2.5;
+const TUNE_DRIFT_LIVE_S = 6;
 
 const checkTuned = () => {
   if (!tuning) return;
@@ -617,7 +746,8 @@ const checkTuned = () => {
     finishEntry(index, playToken);
     return;
   }
-  if (el.paused || el.seeking || el.readyState < 3 || liveDrift(index) > 2.5) {
+  if (el.paused || el.seeking || el.readyState < 3
+      || liveDrift(index) > (isLive(index) ? TUNE_DRIFT_LIVE_S : TUNE_DRIFT_FILE_S)) {
     tuning.from = null;
     return;
   }
@@ -1111,9 +1241,16 @@ const neighborsOf = (index) => [
 // l'algorithme de chargement (abandon de la requête) et preload="none"
 // n'en rouvre aucune. Le flag de bénédiction iOS est porté par l'élément,
 // pas par la source : il survit.
+// Flux en direct : la requête est longue (jusqu'à la fin du fichier) et ne
+// sert plus à rien une fois la station quittée — le lecteur est vidé.
 const releasePlayer = (index) => {
   const el = players[index];
   if (!el.paused || el.src === SILENT_WAV) return;
+  if (isLive(index)) {
+    el.preload = 'none';
+    clearSrc(el);
+    return;
+  }
   const holdsNetwork = el.readyState > 0 || el.networkState === HTMLMediaElement.NETWORK_LOADING;
   el.preload = 'none';
   if (!holdsNetwork) return;
@@ -1121,9 +1258,14 @@ const releasePlayer = (index) => {
   seekIntents[index] = null;
 };
 
+// Une voisine en flux direct n'est jamais gardée : précharger un direct n'a
+// pas de sens (le tampon serait périmé au moment du switch).
 const releaseIdle = (center) => {
   const keep = [center, ...neighborsOf(center)];
-  players.forEach((_, index) => { if (!keep.includes(index)) releasePlayer(index); });
+  players.forEach((_, index) => {
+    if (index === center) return;
+    if (!keep.includes(index) || isLive(index)) releasePlayer(index);
+  });
 };
 
 // Écran verrouillé / app en arrière-plan : UNE seule <audio> active, celle
@@ -1142,7 +1284,9 @@ const warmNeighbors = () => {
   if (saveData() || DEFER_PLAY) return;
   neighborsOf(currentStation).forEach(index => {
     const el = players[index];
-    if (!el.paused) return;
+    // flux en direct : rien à précharger (seules les voisines lues en
+    // fichier — legacy, copies hors ligne — sont préparées)
+    if (!el.paused || usesLive(index)) return;
     el.preload = 'auto';
     syncToLive(index);
   });
@@ -1179,9 +1323,19 @@ const playStation = (index) => {
   const token = ++playToken;
   clearGestureRetry();
   el.preload = 'auto';
-  // iOS : position de départ dans l'URL (armStartFragment) ; ailleurs, ou
-  // si l'élément joue déjà, simple recalage
-  if (!armStartFragment(index)) syncToLive(index);
+  if (usesLive(index)) {
+    // Flux en direct : toute (re)prise ouvre un NOUVEAU flux à la position
+    // live — rien n'est repris d'un flux en pause, périmé. Seul un flux qui
+    // joue déjà près du direct est laissé tel quel.
+    if (el.paused || !isLive(index) || el.error || liveDrift(index) > LIVE_RESYNC_S) {
+      startLive(index);
+    }
+  } else {
+    el.loop = true;
+    // iOS : position de départ dans l'URL (armStartFragment) ; ailleurs, ou
+    // si l'élément joue déjà, simple recalage
+    if (!armStartFragment(index)) syncToLive(index);
+  }
   el.play().catch(() => {
     if (token !== playToken) return;
     endTuning();
@@ -1305,17 +1459,24 @@ const blessAllPlayers = () => {
   dbg('bless players');
   players.forEach((el, index) => {
     if (index === currentStation) return; // la station courante joue dans le geste
-    const realSrc = srcBase(el);
+    // mode direct : pas de source au repos (ni flux à restaurer)
+    const realSrc = el.getAttribute('src') && !isLive(index) ? srcBase(el) : null;
     el.src = SILENT_WAV;
     const p = el.play();
     if (p && p.catch) p.catch(() => {});
     setTimeout(() => {
+      // lecteur déjà repris entre-temps (switch immédiat) : on n'y touche plus
+      if (el.src !== SILENT_WAV) return;
       el.pause();
       // preload="none" : restaurer la vraie source ne relance aucun
       // téléchargement (avant : 8 requêtes de 2 Mo en plein démarrage)
       el.preload = 'none';
-      el.src = realSrc;
-      syncToLive(index);
+      if (realSrc) {
+        el.src = realSrc;
+        syncToLive(index);
+      } else {
+        clearSrc(el);
+      }
     }, 80);
   });
 };
@@ -1541,10 +1702,15 @@ const applyClockChange = () => {
 syncClock();
 window.addEventListener('online', syncClock);
 
-// Filet de sécurité si loop déraille (vieux iOS) : repart sur la position live
+// Fin de lecture : fin de fichier d'un flux en direct (cas normal, une fois
+// par tour de station), ou filet de sécurité si loop déraille (vieux iOS) :
+// repart sur la position live
 players.forEach((el, index) => {
   el.addEventListener('ended', () => {
     if (index !== currentStation) return; // seule la station courante repart
+    // flux en direct : fin du fichier atteinte (ou flux coupé proprement) →
+    // nouveau flux à la position live, qui a rebouclé au début
+    if (isLive(index)) { restartLive(index, 'ended'); return; }
     syncToLive(index);
     el.play().catch(() => {});
   });
@@ -1564,8 +1730,13 @@ players.forEach((el, index) => {
     // le moteur peut avoir déjà mis l'élément en pause au moment de l'erreur
     // (Chrome sur erreur de décodage) : la station courante "devait jouer" tant
     // que l'utilisateur n'a pas mis en pause lui-même
-    const wasPlaying = !el.paused
+    let wasPlaying = !el.paused
       || (index === currentStation && started && playToken !== explicitPauseToken);
+    // Flux en direct en pause SUBIE depuis un moment (AirPods retirés...) :
+    // sa requête, longue et inactive, finit coupée par le réseau. Ce n'est
+    // pas une lecture à relancer — la reprise ouvrira un nouveau flux.
+    if (isLive(index) && el.paused && externalPauseAt
+        && Date.now() - externalPauseAt > 2000) wasPlaying = false;
     // station téléchargée qui jouait en streaming : bascule tout de suite sur
     // la copie locale (offline.js) plutôt que de réessayer le réseau
     if (window.vcrOffline && window.vcrOffline.takeOver
@@ -1594,9 +1765,15 @@ players.forEach((el, index) => {
       const resume = index === currentStation && started
         && (!el.paused || (wasPlaying && token === playToken));
       dbg(`${dbgName(index)} error retry${resume ? ' + play' : ''}`);
-      // iOS : nouvelle source à fragment frais (= rechargement), sinon
-      // load() repartirait sur le #t= périmé du dernier démarrage
-      if (!armStartFragment(index, true)) {
+      if (usesLive(index)) {
+        // flux en direct : un nouveau flux à la position live si la station
+        // doit jouer ; sinon rien à rouvrir (la prochaine lecture le fera),
+        // et un lecteur qui n'est plus la station courante est vidé
+        if (resume) startLive(index, 'error retry');
+        else if (index !== currentStation) releasePlayer(index);
+      } else if (!armStartFragment(index, true)) {
+        // iOS : nouvelle source à fragment frais (= rechargement), sinon
+        // load() repartirait sur le #t= périmé du dernier démarrage
         el.load();
         syncToLive(index);
       }
@@ -1625,7 +1802,7 @@ players.forEach((el, index) => {
     const intended = seekIntents[index];
     // station courante ou non : un lecteur quitté pendant son chargement
     // puis repris aussitôt ne repasse pas par ici
-    if (intended === null) return;
+    if (intended === null || isLive(index)) return; // un flux ne se seeke pas
     if (!DEFER_PLAY && Math.abs(el.currentTime - intended) <= 2.5) return;
     // même cible que le fragment : le reste de l'avance START_LEAD_S
     const lead = Math.max(0, START_LEAD_S - (performance.now() - startArmedAt[index]) / 1000);
@@ -1641,7 +1818,7 @@ players.forEach((el, index) => {
   // que l'élément est prêt, AVANT le démarrage audible
   el.addEventListener('canplay', () => {
     const intended = seekIntents[index];
-    if (index === currentStation && intended !== null
+    if (index === currentStation && intended !== null && !isLive(index)
         && Math.abs(el.currentTime - intended) > 2.5) {
       el.currentTime = intended;
     }
@@ -1663,7 +1840,9 @@ players.forEach((el, index) => {
   el.addEventListener('play', () => {
     if (index !== currentStation || !started) return;
     externalPauseAt = 0;
-    syncToLive(index);
+    // flux en direct repris hors de l'app (son tampon date de la pause) :
+    // rouvert s'il a plus de LIVE_RESYNC_S de retard
+    syncToLive(index, 1.5, true);
   });
 
   // Pause qui ne vient pas de l'app (AirPod retiré, sortie audio coupée,
@@ -1678,6 +1857,25 @@ players.forEach((el, index) => {
 
   el.addEventListener('playing', () => {
     if (index !== currentStation) return;
+    if (isLive(index)) {
+      if (!liveAwaitingPlay[index]) {
+        // reprise après un décrochage : flux rouvert s'il a pris trop de retard
+        syncToLive(index);
+        return;
+      }
+      // premier 'playing' du flux : délai réel ouverture → lecture, qui sert
+      // d'avance au prochain démarrage (moyenne glissante, bornée)
+      liveAwaitingPlay[index] = false;
+      const delay = (performance.now() - liveStartedAt[index]) / 1000 - el.currentTime;
+      liveLead = Math.max(LIVE_LEAD_MIN_S, Math.min(LIVE_LEAD_MAX_S, (liveLead + delay) / 2));
+      const lag = liveDrift(index);
+      dbg(`${dbgName(index)} live playing +${Math.round(delay * 1000)}ms drift ${lag.toFixed(1)}s lead→${liveLead.toFixed(2)}`);
+      if (lag > 2.5) {
+        // station entendue hors position (chargement plus long que l'avance)
+        dbg(`${dbgName(index)} STARTED OFF @${filePosition(index).toFixed(1)} wanted ${livePosition(index).toFixed(1)}`);
+      }
+      return;
+    }
     // le static, lui, s'arrête à l'accord réel (checkTuned), pas ici
     const intended = seekIntents[index];
     seekIntents[index] = null;
@@ -1708,6 +1906,19 @@ setInterval(() => {
   // jamais pendant un seek/buffering en cours : on relancerait la roue
   if (!el.paused && !el.seeking && el.readyState >= 3) {
     syncToLive(currentStation, 10);
+  }
+  // Flux en direct figé (connexion morte sans erreur ni fin de flux : le
+  // navigateur ne peut pas reprendre un flux sans Range) : rouvert après
+  // LIVE_STALL_MS sans donnée jouable. Hors ligne, on attend le réseau.
+  const stuck = isLive(currentStation) && !el.paused && !el.error && el.readyState < 3;
+  if (!stuck) {
+    liveStallSince = 0;
+  } else if (!liveStallSince) {
+    liveStallSince = performance.now();
+  } else if (performance.now() - liveStallSince > LIVE_STALL_MS && navigator.onLine !== false
+      && performance.now() - liveStartedAt[currentStation] > LIVE_RESTART_MIN_MS) {
+    liveStallSince = 0;
+    restartLive(currentStation, 'stall');
   }
 }, 4000);
 

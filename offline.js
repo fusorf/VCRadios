@@ -170,20 +170,26 @@ const swapNow = (index) => {
   if (el.src === SILENT_WAV) { pendingSwap[index] = true; return; }
   // garde le préchargement d'une voisine, sinon rien ne se charge avant lecture
   el.preload = el.preload === 'auto' ? 'auto' : 'none';
+  // un fichier local boucle et se seeke, contrairement au flux en direct
+  // qu'il remplace peut-être (app.js : mode direct)
+  el.loop = true;
   el.src = offlineUrl(stations[index]);
   syncToLive(index); // pose le seekIntent, ré-asserté au canplay par app.js
 };
 
-// Retour au streaming réseau (purge ou entrée de cache disparue)
+// Retour au streaming réseau (purge ou entrée de cache disparue). La source
+// réseau "au repos" dépend du mode (app.js : onNetworkSrc / setNetworkSrc) :
+// le fichier /radio/ en mode legacy, AUCUNE source en mode direct — c'est
+// playStation qui ouvre alors le flux /live/.
 const revertToNetwork = (index) => {
   const el = players[index];
   pendingSwap[index] = false;
-  if (srcBase(el) !== stationUrl(stations[index])) {
+  if (!onNetworkSrc(index)) {
     const wasPlaying = !el.paused;
     el.preload = el.preload === 'auto' ? 'auto' : 'none';
-    el.src = stationUrl(stations[index]);
+    setNetworkSrc(index);
     if (wasPlaying && index === currentStation) playStation(index);
-    else syncToLive(index);
+    else if (!LIVE_MODE) syncToLive(index);
   }
 };
 

@@ -28,6 +28,144 @@ const sizeOf = async (env, key) => {
   return head.size;
 };
 
+// --- Flux "en direct" (/live/radio/KEY.mp3?t=secondes) ----------------------
+// iOS n'affiche une interface "direct" (ni barre de progression ni durée) sur
+// l'écran verrouillé / l'autoradio que pour un média SANS longueur connue,
+// comme un flux Icecast. Cette route sert donc le fichier à partir de la
+// position t, d'une traite jusqu'à la fin, sans Content-Length ni Range :
+// pour le navigateur c'est un flux, pas un fichier. La position "live" est
+// calculée par l'app (horloge commune /time) et passée dans t.
+// Les fichiers sont des MP3 CBR (MPEG-1/2 Layer III) : octet = t × débit / 8,
+// recalé sur un vrai début de trame.
+const PROBE = 4096; // fenêtre de recherche de trame (trame max ≈ 1,4 Ko)
+
+const BITRATES_V1 = [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320];
+const BITRATES_V2 = [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160];
+const SAMPLE_RATES = [44100, 48000, 32000];
+
+// En-tête de trame MPEG audio Layer III à l'index i, ou null.
+// sig = version + couche + fréquence : identique sur toutes les trames d'un
+// même fichier, sert à écarter les fausses synchros dans les données audio.
+const parseFrame = (b, i) => {
+  if (i + 4 > b.length || b[i] !== 0xff || (b[i + 1] & 0xe0) !== 0xe0) return null;
+  const version = (b[i + 1] >> 3) & 3; // 3 = MPEG-1, 2 = MPEG-2, 0 = MPEG-2.5
+  const layer = (b[i + 1] >> 1) & 3;   // 1 = Layer III
+  const bitrateIdx = b[i + 2] >> 4;
+  const rateIdx = (b[i + 2] >> 2) & 3;
+  if (version === 1 || layer !== 1 || bitrateIdx === 0 || bitrateIdx === 15 || rateIdx === 3) return null;
+  const v1 = version === 3;
+  const bitrate = (v1 ? BITRATES_V1 : BITRATES_V2)[bitrateIdx] * 1000;
+  const sampleRate = SAMPLE_RATES[rateIdx] >> (v1 ? 0 : version === 2 ? 1 : 2);
+  const padding = (b[i + 2] >> 1) & 1;
+  return {
+    bitrate,
+    length: Math.floor((v1 ? 144 : 72) * bitrate / sampleRate) + padding,
+    sig: (version << 4) | (layer << 2) | rateIdx
+  };
+};
+
+// Premier index d'une trame dont les deux suivantes (dans la fenêtre) sont
+// aussi valides, même format et même débit (CBR). -1 si aucune.
+const findFrame = (b, ref) => {
+  for (let i = 0; i + 4 <= b.length; i++) {
+    const f = parseFrame(b, i);
+    if (!f || (ref && (f.sig !== ref.sig || f.bitrate !== ref.bitrate))) continue;
+    let j = i + f.length;
+    let ok = 0;
+    for (; ok < 2; ok++) {
+      const n = parseFrame(b, j);
+      if (!n || n.sig !== f.sig || n.bitrate !== f.bitrate) break;
+      j += n.length;
+    }
+    if (ok === 2) return i;
+  }
+  return -1;
+};
+
+const readBytes = async (env, key, offset, length) => {
+  const object = await env.BUCKET.get(key, { range: { offset, length } });
+  if (!object) return null;
+  return { size: object.size, bytes: new Uint8Array(await object.arrayBuffer()) };
+};
+
+// Format du fichier, lu une fois par isolat (les fichiers ne changent
+// jamais) : taille, début des données audio (après un éventuel tag ID3v2),
+// débit et signature de la première trame.
+const metas = new Map();
+
+const metaOf = async (env, key) => {
+  if (metas.has(key)) return metas.get(key);
+  let head = await readBytes(env, key, 0, PROBE);
+  if (!head) return null;
+  const size = head.size;
+  let base = 0;
+  const b = head.bytes;
+  if (b.length >= 10 && b[0] === 0x49 && b[1] === 0x44 && b[2] === 0x33) { // "ID3"
+    base = 10 + ((b[6] & 0x7f) << 21 | (b[7] & 0x7f) << 14 | (b[8] & 0x7f) << 7 | (b[9] & 0x7f));
+    if (base >= size) return null;
+    head = await readBytes(env, key, base, PROBE);
+    if (!head) return null;
+  }
+  const at = findFrame(head.bytes, null);
+  if (at < 0) return null;
+  const frame = parseFrame(head.bytes, at);
+  const meta = { size, dataStart: base + at, bitrate: frame.bitrate, sig: frame.sig };
+  metas.set(key, meta);
+  sizes.set(key, size);
+  return meta;
+};
+
+const liveHeaders = () => new Headers({
+  'Content-Type': 'audio/mpeg',
+  'Cache-Control': 'no-store',
+  'Access-Control-Allow-Origin': '*'
+});
+
+const serveLive = async (request, env, key, url) => {
+  const meta = await metaOf(env, key);
+  if (!meta) {
+    return new Response('Not Found', { status: 404 });
+  }
+  const audioBytes = meta.size - meta.dataStart;
+  const duration = audioBytes * 8 / meta.bitrate;
+  let t = Number(url.searchParams.get('t'));
+  if (!Number.isFinite(t)) t = 0;
+  t = ((t % duration) + duration) % duration;
+
+  // octet visé, puis recalage sur le premier vrai début de trame qui suit
+  // (au plus une trame plus loin, soit ~26 à 36 ms)
+  let start = meta.dataStart + Math.min(audioBytes - 1, Math.floor(t * meta.bitrate / 8));
+  const probe = await readBytes(env, key, start, Math.min(PROBE, meta.size - start));
+  const at = probe ? findFrame(probe.bytes, meta) : -1;
+  // aucune trame complète avant la fin du fichier : le flux repart du début
+  start = at < 0 ? meta.dataStart : start + at;
+
+  const headers = liveHeaders();
+  // débug (curl) : octet et seconde réels du début du flux
+  headers.set('X-Live-Offset', String(start));
+  headers.set('X-Live-Start', ((start - meta.dataStart) * 8 / meta.bitrate).toFixed(3));
+  if (request.method === 'HEAD') {
+    return new Response(null, { status: 200, headers });
+  }
+
+  const object = await env.BUCKET.get(key, { range: { offset: start } });
+  if (!object) {
+    metas.delete(key);
+    sizes.delete(key);
+    return new Response('Not Found', { status: 404 });
+  }
+  // Le corps R2 a une longueur connue : renvoyé tel quel, le runtime
+  // poserait un Content-Length. Passé par un flux identité, il part en
+  // "chunked", sans longueur. IdentityTransformStream est le flux identité
+  // NATIF du runtime : les octets vont de R2 au client sans repasser par le
+  // JS (aucun CPU facturé par chunk — limite de 10 ms du plan gratuit).
+  const Identity = typeof IdentityTransformStream === 'function'
+    ? IdentityTransformStream : TransformStream;
+  // Auditeur parti en cours de flux (le cas normal : chaque changement de
+  // station) : l'abandon se propage au flux R2, la requête s'arrête là.
+  return new Response(object.body.pipeThrough(new Identity()), { status: 200, headers });
+};
+
 export default {
   async fetch(request, env) {
     // Préflight CORS : le téléchargement hors ligne de l'app lit les stations
@@ -72,10 +210,17 @@ export default {
       return new Response('Bad Request', { status: 400 });
     }
 
+    // /live/radio/KEY.mp3 : même fichier, servi comme un flux en direct
+    const live = key.startsWith('live/');
+    if (live) key = key.slice(5);
+
     // Lecture seule, limitée aux fichiers radio
     if (!key.startsWith('radio/') || !key.endsWith('.mp3')) {
       return new Response('Not Found', { status: 404 });
     }
+
+    // tout en-tête Range est ignoré sur cette route (réponse 200, sans longueur)
+    if (live) return serveLive(request, env, key, url);
 
     const size = await sizeOf(env, key);
     if (size === null) {
