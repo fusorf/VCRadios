@@ -1208,8 +1208,14 @@ const setupMediaSession = () => {
   navigator.mediaSession.setActionHandler('nexttrack', () => { dbg('ms action next'); mediaStep(1); });
   // Interface "direct" : ni avance/recul ni déplacement dans le fichier (une
   // radio ne se rembobine pas) — seulement lecture/pause et précédent/suivant
-  ['seekto', 'seekbackward', 'seekforward'].forEach(action => {
-    try { navigator.mediaSession.setActionHandler(action, null); } catch (e) {}
+  try { navigator.mediaSession.setActionHandler('seekto', null); } catch (e) {}
+  // Mode direct : iOS grise précédent/suivant pour un flux sans durée. Les
+  // commandes avance/recul sont branchées en plus sur station suivante /
+  // précédente, au cas où iOS les laisse actives (à confirmer sur appareil).
+  // Hors mode direct : retirées (une radio ne se rembobine pas).
+  const seekStep = (dir) => (LIVE_MODE ? () => { dbg(`ms action seek${dir > 0 ? 'forward' : 'backward'}`); mediaStep(dir); } : null);
+  [['seekbackward', -1], ['seekforward', 1]].forEach(([action, dir]) => {
+    try { navigator.mediaSession.setActionHandler(action, seekStep(dir)); } catch (e) {}
   });
   applyLivePositionState();
 };
