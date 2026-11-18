@@ -906,6 +906,15 @@ const goTo = (target) => {
 
 // Avance d'un cran dans une direction (flèches, media session) : la cible non
 // bornée garantit le bouclage dans le même sens
+// Précédent/suivant de l'écran verrouillé / autoradio / casque : TOUJOURS
+// actifs dès que la radio a démarré. step() les ignorait quand la grille des
+// stations ou le panneau hors ligne était ouvert dans l'app (cas fréquent :
+// on revient à la grille puis on verrouille).
+const mediaStep = (direction) => {
+  if (!started) return;
+  goTo(Math.round(carouselTarget) + direction);
+};
+
 const step = (direction) => {
   // le panneau hors ligne bloque les pointeurs (scrim) mais pas le clavier
   if (!started || pickerOpen() || returningToMenu
@@ -1195,8 +1204,8 @@ const setupMediaSession = () => {
   // "play" resynchronise sur la position live : une radio n'est jamais en pause
   navigator.mediaSession.setActionHandler('play', () => { dbg('ms action play'); playStation(currentStation); });
   navigator.mediaSession.setActionHandler('pause', () => { dbg('ms action pause'); pauseRadio(); });
-  navigator.mediaSession.setActionHandler('previoustrack', () => { dbg('ms action prev'); step(-1); });
-  navigator.mediaSession.setActionHandler('nexttrack', () => { dbg('ms action next'); step(1); });
+  navigator.mediaSession.setActionHandler('previoustrack', () => { dbg('ms action prev'); mediaStep(-1); });
+  navigator.mediaSession.setActionHandler('nexttrack', () => { dbg('ms action next'); mediaStep(1); });
   // Interface "direct" : ni avance/recul ni déplacement dans le fichier (une
   // radio ne se rembobine pas) — seulement lecture/pause et précédent/suivant
   ['seekto', 'seekbackward', 'seekforward'].forEach(action => {
@@ -1443,7 +1452,10 @@ const setStation = (index) => {
     // Page cachée (piste suivante/précédente depuis l'écran verrouillé) :
     // play() IMMÉDIAT. Plus aucun son ne tourne après stopAll(), iOS peut
     // geler le timer du play différé — la station ne repartirait jamais.
-    if (document.hidden) playStation(index);
+    // Mode direct : la connexion au flux + sa mise en tampon prennent déjà
+    // ~0,3-1 s, le static s'entend donc seul d'abord ; différer en plus de
+    // 0,45 s laissait un blanc après le static.
+    if (document.hidden || usesLive(index)) playStation(index);
     else deferPlay(index);
   } else {
     armEntry(index);
