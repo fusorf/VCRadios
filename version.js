@@ -1,7 +1,5 @@
 // Généré par scripts/stamp-version.js — ne pas éditer à la main.
 // Numéro de build de débug = date et heure du build (heure de Paris).
-const BUILD_VERSION = '2026.11.13-0019';
-{
-  const el = document.getElementById('buildVersion');
-  if (el) el.textContent = 'build ' + BUILD_VERSION;
-}
+const BUILD_VERSION = '2026.11.18-1441';
+// libellé complet (build + état de l'horloge commune) rendu par app.js
+if (typeof renderBuildLabel === 'function') renderBuildLabel();

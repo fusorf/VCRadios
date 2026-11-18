@@ -21,10 +21,8 @@ fs.writeFileSync(path.join(ROOT, 'version.js'),
 `// Généré par scripts/stamp-version.js — ne pas éditer à la main.
 // Numéro de build de débug = date et heure du build (heure de Paris).
 const BUILD_VERSION = '${version}';
-{
-  const el = document.getElementById('buildVersion');
-  if (el) el.textContent = 'build ' + BUILD_VERSION;
-}
+// libellé complet (build + état de l'horloge commune) rendu par app.js
+if (typeof renderBuildLabel === 'function') renderBuildLabel();
 `);
 
 const swPath = path.join(ROOT, 'pwabuilder-adv-sw.js');

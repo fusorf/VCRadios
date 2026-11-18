@@ -58,6 +58,79 @@ const stationOffset = (station) => {
 };
 const offsets = stations.map(stationOffset);
 
+// --- Horloge commune -------------------------------------------------------
+// La position live dépend de l'heure : une horloge d'appareil mal réglée
+// décalait l'écoute. On se cale donc sur l'heure du Worker (même référence
+// pour tous les auditeurs, à quelques dizaines de ms près), mesurée façon
+// NTP : plusieurs allers-retours, on garde le plus court (le moins
+// asymétrique), et l'heure serveur est rapportée au milieu de l'aller-retour.
+// Sans réseau (hors ligne, Worker injoignable) : heure de l'appareil.
+const TIME_URL = `${AUDIO_BASE_URL}/time`;
+const CLOCK_SAMPLES = 4;
+const CLOCK_TIMEOUT_MS = 3000;
+const CLOCK_RESYNC_MS = 30 * 60 * 1000; // re-mesure au retour sur l'app
+let clockOffset = 0;      // ms à ajouter à Date.now()
+let clockError = null;    // incertitude (demi aller-retour), null = appareil
+let clockSyncedAt = 0;
+let clockSyncing = false;
+
+const now = () => Date.now() + clockOffset;
+
+const clockLabel = () => clockError === null
+  ? 'device clock'
+  : `clock ${clockOffset >= 0 ? '+' : ''}${Math.round(clockOffset)} ±${Math.round(clockError)} ms`;
+
+// Libellé de débug discret (bas gauche), complété par version.js
+const renderBuildLabel = () => {
+  const el = document.getElementById('buildVersion');
+  if (!el || typeof BUILD_VERSION === 'undefined') return;
+  el.textContent = `build ${BUILD_VERSION} · ${clockLabel()}`;
+};
+
+const sampleClock = async () => {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), CLOCK_TIMEOUT_MS);
+  try {
+    const d0 = Date.now();
+    const t0 = performance.now();
+    const res = await fetch(TIME_URL, { cache: 'no-store', signal: ctrl.signal });
+    const t1 = performance.now();
+    if (!res.ok) return null;
+    const server = (await res.json()).now;
+    if (!Number.isFinite(server)) return null;
+    const rtt = t1 - t0;
+    // heure serveur ≈ heure de l'appareil au milieu de l'aller-retour
+    return { rtt, offset: server - (d0 + rtt / 2) };
+  } catch (e) {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
+const syncClock = async () => {
+  if (clockSyncing || navigator.onLine === false) return;
+  clockSyncing = true;
+  try {
+    let best = null;
+    for (let i = 0; i < CLOCK_SAMPLES; i++) {
+      const s = await sampleClock();
+      if (s && (!best || s.rtt < best.rtt)) best = s;
+      if (!s && i === 0) break; // Worker injoignable : pas d'acharnement
+    }
+    if (!best) return; // on garde l'horloge actuelle (appareil par défaut)
+    const delta = best.offset - clockOffset;
+    clockOffset = best.offset;
+    clockError = best.rtt / 2;
+    clockSyncedAt = Date.now();
+    renderBuildLabel();
+    // correction notable alors que la radio joue déjà : recalage immédiat
+    if (Math.abs(delta) > 1000 && started) applyClockChange();
+  } finally {
+    clockSyncing = false;
+  }
+};
+
 // nettoyage des anciens offsets aléatoires par appareil
 try { localStorage.removeItem('vcr-offsets'); } catch (e) {}
 
@@ -97,7 +170,7 @@ const players = stations.map(station => {
 });
 
 const livePosition = (index) => {
-  const elapsed = (Date.now() - EPOCH) / 1000 + offsets[index];
+  const elapsed = (now() - EPOCH) / 1000 + offsets[index];
   return mod(elapsed, stations[index].duration);
 };
 
@@ -989,7 +1062,19 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible') return;
   const el = players[currentStation];
   if (!el.paused) syncToLive(currentStation, 10);
+  if (Date.now() - clockSyncedAt > CLOCK_RESYNC_MS) syncClock();
 });
+
+// Horloge commune : recalage de la station en cours (et des voisines déjà
+// préparées) quand la correction d'heure arrive après le début de l'écoute
+const applyClockChange = () => {
+  if (!players[currentStation].paused) syncToLive(currentStation);
+  neighborsOf(currentStation).forEach(index => {
+    if (players[index].paused && players[index].preload === 'auto') syncToLive(index);
+  });
+};
+syncClock();
+window.addEventListener('online', syncClock);
 
 // Filet de sécurité si loop déraille (vieux iOS) : repart sur la position live
 players.forEach((el, index) => {

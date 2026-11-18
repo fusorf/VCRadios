@@ -35,6 +35,22 @@ export default {
     }
 
     const url = new URL(request.url);
+
+    // Horloge de référence de l'app : tous les auditeurs calent la position
+    // "live" des stations sur cette heure plutôt que sur celle de leur
+    // appareil (qui peut être mal réglée). Millisecondes, contrairement à
+    // l'en-tête Date (à la seconde). Dans un Worker, Date.now() vaut l'heure
+    // d'arrivée de la requête : exactement ce qu'il faut ici.
+    if (url.pathname === '/time') {
+      return new Response(JSON.stringify({ now: Date.now() }), {
+        headers: {
+          'Content-Type': 'application/json',
+          'Cache-Control': 'no-store',
+          'Access-Control-Allow-Origin': '*'
+        }
+      });
+    }
+
     let key;
     try {
       key = decodeURIComponent(url.pathname.slice(1));
