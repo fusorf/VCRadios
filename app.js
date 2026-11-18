@@ -1011,6 +1011,24 @@ pauseButton.addEventListener('click', () => {
   trackInfo.textContent = '';
 });
 
+// Hors ligne, seules les stations téléchargées sont jouables : les autres
+// sont grisées (grille et carrousel). offline.js rappelle cette fonction
+// quand un téléchargement se termine ou est purgé.
+const stationAvailable = (index) => navigator.onLine !== false
+  || !!(window.vcrOffline && window.vcrOffline.isDownloaded
+        && window.vcrOffline.isDownloaded(index));
+
+const updateAvailability = () => {
+  const tiles = stationPicker.querySelectorAll('.picker-tile');
+  stations.forEach((_, index) => {
+    const off = !stationAvailable(index);
+    if (tiles[index]) tiles[index].classList.toggle('off-air', off);
+    if (pages[index]) pages[index].classList.toggle('off-air', off);
+  });
+};
+window.addEventListener('online', updateAvailability);
+window.addEventListener('offline', updateAvailability);
+
 const initPicker = () => {
   const grid = stationPicker.querySelector('.picker-grid');
   stations.forEach((station, index) => {
@@ -1043,6 +1061,7 @@ document.addEventListener('keydown', primeAudio, { capture: true, once: true });
 
 initCarousel();
 initPicker();
+updateAvailability();
 setupMediaSession();
 updateMediaSessionMetadata();
 
@@ -1093,12 +1112,25 @@ players.forEach((el, index) => {
   el.addEventListener('error', () => {
     // élément jamais demandé (preload none, pas de lecture) : rien à réparer
     if (el.preload === 'none' && el.paused) return;
-    retryDelays[index] = Math.min(15000, retryDelays[index] ? retryDelays[index] * 2 : 1500);
     // ne relancer la lecture que si elle était en cours au moment de l'erreur
     // et qu'aucune pause explicite n'est intervenue depuis
     const wasPlaying = !el.paused;
+    // station téléchargée qui jouait en streaming : bascule tout de suite sur
+    // la copie locale (offline.js) plutôt que de réessayer le réseau
+    if (window.vcrOffline && window.vcrOffline.takeOver
+        && window.vcrOffline.takeOver(index, wasPlaying)) return;
+    retryDelays[index] = Math.min(15000, retryDelays[index] ? retryDelays[index] * 2 : 1500);
     const token = playToken;
-    setTimeout(() => {
+    // hors ligne, une source réseau ne peut que rééchouer : on attend le
+    // retour de la connexion au lieu de réessayer toutes les 15 s
+    const schedule = (fn) => {
+      if (navigator.onLine === false && !el.src.startsWith(location.origin)) {
+        window.addEventListener('online', () => setTimeout(fn, 500), { once: true });
+      } else {
+        setTimeout(fn, retryDelays[index]);
+      }
+    };
+    schedule(() => {
       el.load();
       if (index === currentStation && started && wasPlaying && token === playToken) {
         syncToLive(index);
@@ -1106,7 +1138,7 @@ players.forEach((el, index) => {
       } else {
         syncToLive(index);
       }
-    }, retryDelays[index]);
+    });
   });
 });
 

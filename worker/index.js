@@ -30,6 +30,19 @@ const sizeOf = async (env, key) => {
 
 export default {
   async fetch(request, env) {
+    // Préflight CORS : le téléchargement hors ligne de l'app lit les stations
+    // par chunks (fetch() avec un header Range, qui n'est pas "simple")
+    if (request.method === 'OPTIONS') {
+      return new Response(null, {
+        status: 204,
+        headers: {
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'GET, HEAD',
+          'Access-Control-Allow-Headers': 'Range',
+          'Access-Control-Max-Age': '86400'
+        }
+      });
+    }
     if (request.method !== 'GET' && request.method !== 'HEAD') {
       return new Response('Method Not Allowed', { status: 405 });
     }
@@ -114,6 +127,8 @@ export default {
     headers.set('ETag', object.httpEtag);
     headers.set('Accept-Ranges', 'bytes');
     headers.set('Access-Control-Allow-Origin', '*');
+    // lisibles par fetch() (téléchargement hors ligne par chunks)
+    headers.set('Access-Control-Expose-Headers', 'Content-Range, Content-Length, Accept-Ranges');
     // Les fichiers radio ne changent jamais : cache navigateur agressif
     headers.set('Cache-Control', 'public, max-age=31536000, immutable');
     headers.set('Content-Length', String(end - start + 1));

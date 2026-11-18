@@ -8,7 +8,7 @@
 // rempli par offline.js (téléchargements pour écoute hors ligne).
 // Réécrit par scripts/stamp-version.js à chaque build (= numéro de build) :
 // chaque release change donc ce fichier, déclenchant la mise à jour du SW
-const CACHE_VERSION = '2026.11.18-1441';
+const CACHE_VERSION = '2026.11.18-1457';
 const STATIC_CACHE = 'static-' + CACHE_VERSION;
 // versionné : un cache d'images éternel servait les images modifiées
 // périmées pour toujours
@@ -87,8 +87,11 @@ self.addEventListener('activate', (event) => {
     if (self.registration.navigationPreload) {
       try { await self.registration.navigationPreload.enable(); } catch (e) {}
     }
+    // seulement NOS anciens caches versionnés : l'origine fusorf.github.io
+    // est partagée avec d'autres projets, dont on ne touche pas les caches
     const names = await caches.keys();
-    await Promise.all(names.filter(name => !keep.includes(name)).map(name => caches.delete(name)));
+    const ours = (name) => name.startsWith('static-') || name.startsWith('images-');
+    await Promise.all(names.filter(name => ours(name) && !keep.includes(name)).map(name => caches.delete(name)));
     await self.clients.claim();
   })());
 });
@@ -216,11 +219,80 @@ self.addEventListener('message', (event) => {
   if (event.data && event.data.type === 'radio-purged') blobMemo.clear();
 });
 
+// Nouveau format (offline.js) : chunks de 2 Mo sous URL.partN + manifeste
+// URL.json écrit en dernier. Chaque requête ne lit que le(s) chunk(s)
+// couvrant la plage demandée : mémoire bornée, et rien à garder en vie
+// entre deux requêtes (le SW peut être tué à tout moment sur iOS).
+const parseRange = (rangeHeader, size) => {
+  const m = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader.trim());
+  if (!m || (m[1] === '' && m[2] === '')) return null;
+  let start, end;
+  if (m[1] === '') {
+    // suffixe : les N derniers octets
+    start = Math.max(0, size - Number(m[2]));
+    end = size - 1;
+  } else {
+    start = Number(m[1]);
+    end = m[2] === ''
+      ? Math.min(size - 1, start + RADIO_CHUNK - 1) // plage ouverte : bornée
+      : Math.min(Number(m[2]), size - 1);
+  }
+  if (start >= size || start > end) return null;
+  return { start, end };
+};
+
+const chunkedRadio = async (cache, url, manifest, rangeHeader) => {
+  const size = manifest.size;
+  const chunk = manifest.chunk;
+  let start = 0;
+  let end = size - 1;
+  if (rangeHeader) {
+    const range = parseRange(rangeHeader, size);
+    if (!range) {
+      return new Response(null, { status: 416, headers: { 'Content-Range': 'bytes */' + size } });
+    }
+    ({ start, end } = range);
+  }
+  const first = Math.floor(start / chunk);
+  const last = Math.floor(end / chunk);
+  const parts = [];
+  for (let n = first; n <= last; n++) {
+    const hit = await cache.match(url + '.part' + n);
+    // chunk évincé : 404 → offline.js rebascule en streaming
+    if (!hit) return new Response('Gone', { status: 404 });
+    const blob = await hit.blob();
+    const from = n === first ? start - n * chunk : 0;
+    const to = n === last ? end - n * chunk + 1 : blob.size;
+    parts.push(blob.slice(from, to));
+  }
+  const body = new Blob(parts, { type: 'audio/mpeg' });
+  const headers = {
+    'Content-Type': 'audio/mpeg',
+    'Content-Length': String(body.size),
+    'Accept-Ranges': 'bytes'
+  };
+  if (!rangeHeader) return new Response(body, { status: 200, headers });
+  headers['Content-Range'] = `bytes ${start}-${end}/${size}`;
+  return new Response(body, { status: 206, headers });
+};
+
 const offlineRadio = async (request) => {
-  const blob = await getRadioBlob(request.url);
+  const url = request.url.split('?')[0];
+  const rangeHeader = request.headers.get('range');
+  const cache = await caches.open(RADIO_CACHE);
+  const manifestHit = await cache.match(url + '.json');
+  if (manifestHit) {
+    let manifest = null;
+    try { manifest = await manifestHit.json(); } catch (e) {}
+    if (manifest && manifest.size && manifest.chunk) {
+      return chunkedRadio(cache, url, manifest, rangeHeader);
+    }
+  }
+
+  // ancien format : fichier entier
+  const blob = await getRadioBlob(url);
   if (!blob) return new Response('Gone', { status: 404 });
   const size = blob.size;
-  const rangeHeader = request.headers.get('range');
 
   if (!rangeHeader) {
     return new Response(blob, {
@@ -233,24 +305,11 @@ const offlineRadio = async (request) => {
     });
   }
 
-  const m = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader.trim());
-  if (!m || (m[1] === '' && m[2] === '')) {
+  const range = parseRange(rangeHeader, size);
+  if (!range) {
     return new Response(null, { status: 416, headers: { 'Content-Range': 'bytes */' + size } });
   }
-  let start, end;
-  if (m[1] === '') {
-    // suffixe : les N derniers octets
-    start = Math.max(0, size - Number(m[2]));
-    end = size - 1;
-  } else {
-    start = Number(m[1]);
-    end = m[2] === ''
-      ? Math.min(size - 1, start + RADIO_CHUNK - 1) // plage ouverte : bornée
-      : Math.min(Number(m[2]), size - 1);
-  }
-  if (start >= size || start > end) {
-    return new Response(null, { status: 416, headers: { 'Content-Range': 'bytes */' + size } });
-  }
+  const { start, end } = range;
   const slice = blob.slice(start, end + 1, 'audio/mpeg');
   return new Response(slice, {
     status: 206,

@@ -209,6 +209,16 @@ body {
   filter: brightness(1.25);
 }
 
+/* Hors ligne : station non téléchargée, donc injouable */
+.picker-tile.off-air,
+.picker-tile.off-air:hover {
+  filter: grayscale(1) brightness(0.45);
+}
+
+.station-page.off-air {
+  filter: grayscale(1) brightness(0.45);
+}
+
 /* Dimensions définies (pas max-*) : la taille ne dépend pas de la taille
    intrinsèque du PNG, sinon iOS Safari garde la taille naturelle tant
    qu'un reflow n'est pas forcé quand l'image charge après le layout */
