@@ -276,7 +276,9 @@ players.forEach((el, index) => {
     return p;
   };
   ['playing', 'pause', 'waiting', 'stalled'].forEach(type => {
-    el.addEventListener(type, () => dbg(`${name} ${type}`));
+    el.addEventListener(type, () => dbg(type === 'playing'
+      ? `${name} playing @${el.currentTime.toFixed(1)} (live ${livePosition(index).toFixed(1)})`
+      : `${name} ${type}`));
   });
   el.addEventListener('error', () => dbg(`${name} error ${el.error ? el.error.code : '?'}`));
   let wasMuted = el.muted;
@@ -1116,6 +1118,21 @@ const playStation = (index) => {
   const token = ++playToken;
   clearGestureRetry();
   el.preload = 'auto';
+  // iOS (DEFER_PLAY) : un élément en pause DÉJÀ chargé mais loin de la
+  // position live (reprise après pause, station re-visitée) rejouerait
+  // d'abord quelques ms à son ancienne position — le seek posé en pause y
+  // est ignoré, et le recalage n'arrive qu'au 'playing', donc trop tard :
+  // on l'entend. On le repart À FROID (rechargement) : plus aucune donnée
+  // jouable tant que les métadonnées ne sont pas revenues, moment où le
+  // seek est ré-asserté ('loadedmetadata'), avant tout son.
+  // Pas sous le static au premier plan : il couvre l'entrée, et on garde le
+  // bénéfice des voisines préchargées.
+  if (DEFER_PLAY && el.paused && el.readyState > 0 && el.src !== SILENT_WAV
+      && (document.hidden || staticVoice === null) && liveDrift(index) > 1.5) {
+    dbg(`${dbgName(index)} cold start (was @${el.currentTime.toFixed(1)})`);
+    el.src = el.src;
+    seekIntents[index] = null;
+  }
   syncToLive(index);
   el.play().catch(() => {
     if (token !== playToken) return;
@@ -1139,6 +1156,33 @@ const playStation = (index) => {
 const stopAll = () => {
   players.forEach(el => { if (!el.paused) el.pause(); });
 };
+
+// INVARIANT : seule `currentStation` a le droit de jouer. Au déverrouillage,
+// iOS peut relancer de lui-même des lecteurs qu'on avait lancés puis mis en
+// pause page cachée (stations survolées avec piste suivante/précédente de
+// l'écran verrouillé) : plusieurs stations jouaient en même temps. Tout
+// lecteur non courant qui joue est donc remis en pause, d'où que vienne son
+// play() — et libéré, pour qu'il n'ait plus rien à jouer.
+// Ne gêne pas un switch : setStation() change currentStation AVANT le play().
+// Les play() de bénédiction iOS (silence en data-URI) ne sont pas concernés.
+const enforceSingle = (index, why) => {
+  const el = players[index];
+  if (index === currentStation || el.paused || el.src.startsWith('data:')) return false;
+  dbg(`GUARD ${dbgName(index)} playing (${why}), not current → pause`);
+  el.pause();
+  releasePlayer(index);
+  return true;
+};
+
+const enforceSingleAll = (why) => {
+  players.forEach((_, index) => enforceSingle(index, why));
+};
+
+players.forEach((el, index) => {
+  ['play', 'playing'].forEach(type => {
+    el.addEventListener(type, () => enforceSingle(index, type));
+  });
+});
 
 // Pause explicite (bouton pause du menu, Media Session) : annule aussi
 // toute relance différée en attente
@@ -1180,7 +1224,9 @@ const setStation = (index) => {
   stopAll();
   // libère tout de suite les connexions des stations quittées (switchs en
   // rafale compris) pour que la requête de la station visée parte sans attendre
-  releaseIdle(index);
+  // page cachée : TOUT sauf la station visée (voisines comprises) — un
+  // lecteur libéré n'a plus rien à jouer si iOS le relance au déverrouillage
+  if (document.hidden) releaseAllButCurrent(); else releaseIdle(index);
   playStatic();
   // gardé dans les deux cas : sert aussi à la reprise du static ('waiting')
   startTuning(index);
@@ -1426,6 +1472,9 @@ document.addEventListener('visibilitychange', () => {
     releaseAllButCurrent();
     return;
   }
+  // retour au premier plan : aucune autre station que la courante ne joue
+  // (iOS relance parfois les lecteurs lancés page cachée, voir enforceSingle)
+  enforceSingleAll('visible');
   const el = players[currentStation];
   if (!el.paused) syncToLive(currentStation, 10);
   // retour au premier plan : on re-prépare les voisines pour des switchs rapides
@@ -1447,6 +1496,7 @@ window.addEventListener('online', syncClock);
 // Filet de sécurité si loop déraille (vieux iOS) : repart sur la position live
 players.forEach((el, index) => {
   el.addEventListener('ended', () => {
+    if (index !== currentStation) return; // seule la station courante repart
     syncToLive(index);
     el.play().catch(() => {});
   });
@@ -1512,6 +1562,25 @@ players.forEach((el, index) => {
 //   pause (WebKit/iOS) et a repris à l'ancienne position → on recale, cette
 //   fois en cours de lecture où les seeks fonctionnent partout.
 players.forEach((el, index) => {
+  // Départ à froid (rien de chargé au play()) : iOS jette le seek posé avant
+  // les métadonnées et démarrait à 0 — quelques ms audibles avant le
+  // recalage du 'canplay', qui arrive alors que le son est déjà parti.
+  // 'loadedmetadata' est le premier instant où un seek est un VRAI seek, et
+  // aucun son ne peut encore sortir (pas de données décodées) : on y repose
+  // la position live. Sur iOS sans condition : le getter currentTime y
+  // renvoie la valeur demandée même quand le moteur l'a ignorée.
+  el.addEventListener('loadedmetadata', () => {
+    const intended = seekIntents[index];
+    // station courante ou non : un lecteur quitté pendant son chargement
+    // puis repris aussitôt ne repasse pas par ici
+    if (intended === null) return;
+    if (!DEFER_PLAY && Math.abs(el.currentTime - intended) <= 2.5) return;
+    const pos = livePosition(index);
+    dbg(`${dbgName(index)} metadata @${el.currentTime.toFixed(1)} → seek ${pos.toFixed(1)}`);
+    el.currentTime = pos;
+    seekIntents[index] = pos;
+  });
+
   // iOS peut jeter un seek posé avant les métadonnées : on le ré-asserte dès
   // que l'élément est prêt, AVANT le démarrage audible
   el.addEventListener('canplay', () => {
@@ -1557,6 +1626,9 @@ players.forEach((el, index) => {
     const intended = seekIntents[index];
     seekIntents[index] = null;
     if (intended !== null && Math.abs(el.currentTime - intended) > 2.5) {
+      // ne devrait plus arriver (seek posé au 'loadedmetadata') : si cette
+      // ligne apparaît, la station a été entendue hors position
+      dbg(`${dbgName(index)} STARTED OFF @${el.currentTime.toFixed(1)} wanted ${intended.toFixed(1)}`);
       syncToLive(index);
     } else {
       // pas de seek en attente : simple garde-fou contre les grosses dérives
@@ -1576,6 +1648,7 @@ setInterval(() => {
     dbg(`bg ${dbgName(currentStation)} ${el.paused ? 'PAUSED' : 'playing'} rs${el.readyState} actifs ${active}`);
   }
   syncPlaybackState();
+  enforceSingleAll('poll'); // filet : un événement 'play' manqué
   // jamais pendant un seek/buffering en cours : on relancerait la roue
   if (!el.paused && !el.seeking && el.readyState >= 3) {
     syncToLive(currentStation, 10);
