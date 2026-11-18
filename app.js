@@ -1097,6 +1097,8 @@ const scheduleWarm = () => {
 // depuis — sinon une pause depuis l'écran verrouillé pouvait être annulée
 // par le prochain tap dans l'app.
 let playToken = 0;
+let explicitPauseToken = -1; // jeton au moment de la dernière pause voulue par l'utilisateur
+let externalPauseAt = 0;     // horodatage d'une pause imposée de l'extérieur
 let gestureRetry = null;
 
 const clearGestureRetry = () => {
@@ -1140,6 +1142,8 @@ const stopAll = () => {
 const pauseRadio = () => {
   dbg('pauseRadio');
   playToken++;
+  explicitPauseToken = playToken;
+  externalPauseAt = 0;
   clearGestureRetry();
   cancelDeferredPlay();
   endTuning();
@@ -1520,6 +1524,26 @@ players.forEach((el, index) => {
     startTuning(index);
   });
 
+  // REPRISE, quelle que soit la façon dont la lecture a été coupée puis
+  // relancée (AirPod retiré/remis, écran verrouillé, centre de contrôle,
+  // casque Bluetooth, iOS qui relance l'élément lui-même...) : on repart à
+  // la position live, jamais là où la pause avait figé la lecture.
+  el.addEventListener('play', () => {
+    if (index !== currentStation || !started) return;
+    externalPauseAt = 0;
+    syncToLive(index);
+  });
+
+  // Pause qui ne vient pas de l'app (AirPod retiré, sortie audio coupée,
+  // appel...) : notée pour une reprise automatique au retour de la sortie
+  // audio (voir 'devicechange'). Les pauses de switch visent l'ancienne
+  // station (currentStation a déjà changé) et sont ignorées.
+  el.addEventListener('pause', () => {
+    if (index !== currentStation || !started || playToken === explicitPauseToken) return;
+    externalPauseAt = Date.now();
+    dbg(`${dbgName(index)} pause externe`);
+  });
+
   el.addEventListener('playing', () => {
     if (index !== currentStation) return;
     // le static, lui, s'arrête à l'accord réel (checkTuned), pas ici
@@ -1554,6 +1578,24 @@ setInterval(() => {
 // Rafraîchit le morceau affiché au fil de la lecture (les titres changent
 // toutes les quelques minutes, une vérif toutes les 2 s suffit)
 setInterval(updateTrackInfo, 2000);
+
+// Retour de la sortie audio (AirPods remis, casque rebranché) après une
+// pause qui ne venait pas de l'app : reprise automatique, à la position
+// live. iOS renvoie normalement lui-même un "play" (handler Media Session) ;
+// ceci est un filet quand il ne le fait pas. Fenêtre de 10 min : au-delà,
+// relancer tout seul surprendrait.
+const EXTERNAL_RESUME_MS = 10 * 60 * 1000;
+if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+  navigator.mediaDevices.addEventListener('devicechange', () => {
+    dbg('devicechange');
+    const el = players[currentStation];
+    if (!started || !el.paused || !externalPauseAt) return;
+    if (Date.now() - externalPauseAt > EXTERNAL_RESUME_MS) return;
+    externalPauseAt = 0;
+    dbg('reprise auto (sortie audio revenue)');
+    playStation(currentStation);
+  });
+}
 
 // --- Clavier ---------------------------------------------------------------
 // Ignoré quand un champ a le focus (le slider de volume consomme déjà les
