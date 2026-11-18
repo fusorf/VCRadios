@@ -8,7 +8,7 @@
 // rempli par offline.js (téléchargements pour écoute hors ligne).
 // Réécrit par scripts/stamp-version.js à chaque build (= numéro de build) :
 // chaque release change donc ce fichier, déclenchant la mise à jour du SW
-const CACHE_VERSION = '2026.11.18-1629';
+const CACHE_VERSION = '2026.11.18-1646';
 const STATIC_CACHE = 'static-' + CACHE_VERSION;
 // versionné : un cache d'images éternel servait les images modifiées
 // périmées pour toujours
@@ -58,15 +58,15 @@ const PRECACHE_FILES = [
   './logos/V-Rock-GTAVC-Logo.svg',
   './logos/Wave103-GTAVC-Logo.svg',
   './logos/WildstylePirateRadio.webp',
-  './logos/notif/EMOTION.png',
-  './logos/notif/ESPANT.png',
-  './logos/notif/FEVER.png',
-  './logos/notif/FLASH.png',
-  './logos/notif/KCHAT.png',
-  './logos/notif/VCPR.png',
-  './logos/notif/VROCK.png',
-  './logos/notif/WAVE.png',
-  './logos/notif/WILD.png'
+  './logos/artwork/EMOTION.png',
+  './logos/artwork/ESPANT.png',
+  './logos/artwork/FEVER.png',
+  './logos/artwork/FLASH.png',
+  './logos/artwork/KCHAT.png',
+  './logos/artwork/VCPR.png',
+  './logos/artwork/VROCK.png',
+  './logos/artwork/WAVE.png',
+  './logos/artwork/WILD.png'
 ];
 
 self.addEventListener('install', (event) => {

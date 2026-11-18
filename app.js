@@ -979,7 +979,9 @@ const updateMediaSessionMetadata = () => {
   }
   mediaMetaStation = currentStation;
   dbg(`meta new ${dbgName(currentStation)} "${title}"`);
-  const art = `logos/notif/${stationArtKey(currentStation)}.png`;
+  // fond blanc OPAQUE : sur l'autoradio (iPod / CarPlay / Bluetooth) la
+  // transparence s'affichait en noir ou en artefacts
+  const art = `logos/artwork/${stationArtKey(currentStation)}.png`;
   navigator.mediaSession.metadata = new MediaMetadata({
     title,
     artist,
@@ -996,14 +998,20 @@ const updateMediaSessionMetadata = () => {
 // que plus rien ne joue. La pause de la station quittée pendant un switch
 // n'est pas "courante" (currentStation a déjà changé) : pas de passage par
 // 'paused' entre deux stations.
-players.forEach((el, index) => {
+// État recalculé depuis la réalité (station courante en lecture, ou lecture
+// différée en attente) plutôt que copié d'un seul événement : un événement
+// manqué ou arrivé dans le désordre laissait l'écran verrouillé sur "pause"
+// alors que la radio jouait. Recalé aussi périodiquement (intervalle 4 s).
+const syncPlaybackState = () => {
   if (!('mediaSession' in navigator)) return;
-  const set = (state) => {
-    if (index !== currentStation) return;
-    try { navigator.mediaSession.playbackState = state; } catch (e) {}
-  };
-  el.addEventListener('playing', () => set('playing'));
-  el.addEventListener('pause', () => set('paused'));
+  const playing = started && (!players[currentStation].paused || deferTimer !== null);
+  const state = playing ? 'playing' : 'paused';
+  if (navigator.mediaSession.playbackState === state) return;
+  try { navigator.mediaSession.playbackState = state; } catch (e) {}
+  dbg(`ms state ${state}`);
+};
+players.forEach(el => {
+  ['play', 'playing', 'pause'].forEach(type => el.addEventListener(type, syncPlaybackState));
 });
 
 const setupMediaSession = () => {
@@ -1536,6 +1544,7 @@ setInterval(() => {
     const active = players.filter(p => !p.paused || p.networkState === HTMLMediaElement.NETWORK_LOADING).length;
     dbg(`bg ${dbgName(currentStation)} ${el.paused ? 'PAUSED' : 'playing'} rs${el.readyState} actifs ${active}`);
   }
+  syncPlaybackState();
   // jamais pendant un seek/buffering en cours : on relancerait la roue
   if (!el.paused && !el.seeking && el.readyState >= 3) {
     syncToLive(currentStation, 10);
