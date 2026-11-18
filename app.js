@@ -838,11 +838,17 @@ const currentTrack = () => {
   return current;
 };
 
-// Titre / artiste affichés pour une entrée de tracklist. Coupure pub
-// ([début, ADS], tracks.js) : « Publicités » + nom de la station.
-const trackLabel = (track) => track[1] === ADS
-  ? { title: T.ads, artist: stations[currentStation].name }
-  : { title: track[1], artist: track[2] };
+// Titre / artiste affichés pour une entrée de tracklist (tracks.js). Coupure
+// pub [début, ADS] ou passage parlé [début, TALK] (interview, sketch, long
+// DJ) : aucun titre (null) — la ligne du morceau se vide et l'écran
+// verrouillé affiche le nom de la station, jamais le morceau d'avant ou
+// d'après. Marqueurs comparés en littéraux : app.js ne dépend pas de la
+// version de tracks.js.
+const NON_MUSIC = ['ads', 'talk'];
+const trackLabel = (track) => {
+  if (!track || NON_MUSIC.includes(track[1])) return null;
+  return { title: track[1], artist: track[2] };
+};
 
 // Clé de l'artwork de notif (radio/EMOTION.mp3 -> EMOTION)
 const stationArtKey = (index) => stations[index].file.slice(6, -4);
@@ -855,7 +861,7 @@ const setTrackText = (text) => {
 const updateTrackInfo = () => {
   if (players[currentStation].paused) { setTrackText(''); return; }
   const track = currentTrack();
-  const label = track && trackLabel(track);
+  const label = trackLabel(track);
   setTrackText(label ? `${label.title} — ${label.artist}` : '');
   // rafraîchit la notif quand le morceau change en cours de lecture
   const key = currentStation + '|' + (track ? track[1] : '');
@@ -952,7 +958,7 @@ const updateMediaSessionMetadata = () => {
   const station = stations[currentStation];
   const track = currentTrack();
   lastMediaKey = currentStation + '|' + (track ? track[1] : '');
-  const label = track && trackLabel(track);
+  const label = trackLabel(track);
   const title = label ? label.title : station.name;
   const artist = label ? label.artist : 'Vice City Radio';
   // Même station, seul le morceau change (toutes les ~4-5 min, souvent écran
@@ -1003,10 +1009,10 @@ players.forEach((el, index) => {
 const setupMediaSession = () => {
   if (!('mediaSession' in navigator)) return;
   // "play" resynchronise sur la position live : une radio n'est jamais en pause
-  navigator.mediaSession.setActionHandler('play', () => playStation(currentStation));
-  navigator.mediaSession.setActionHandler('pause', () => pauseRadio());
-  navigator.mediaSession.setActionHandler('previoustrack', () => step(-1));
-  navigator.mediaSession.setActionHandler('nexttrack', () => step(1));
+  navigator.mediaSession.setActionHandler('play', () => { dbg('ms action play'); playStation(currentStation); });
+  navigator.mediaSession.setActionHandler('pause', () => { dbg('ms action pause'); pauseRadio(); });
+  navigator.mediaSession.setActionHandler('previoustrack', () => { dbg('ms action prev'); step(-1); });
+  navigator.mediaSession.setActionHandler('nexttrack', () => { dbg('ms action next'); step(1); });
 };
 
 // --- Lecture ---------------------------------------------------------------
@@ -1047,7 +1053,17 @@ const releaseIdle = (center) => {
   players.forEach((_, index) => { if (!keep.includes(index)) releasePlayer(index); });
 };
 
+// Écran verrouillé / app en arrière-plan : UNE seule <audio> active, celle
+// qu'on écoute. Les voisines préchargées continuaient de charger (stalled
+// à répétition dans le journal iOS) ; iOS rattache le lecteur de l'écran
+// verrouillé à un élément audio et peut le céder à un élément en pause qui
+// s'active → contrôles disparus alors que la musique continue.
+const releaseAllButCurrent = () => {
+  players.forEach((_, index) => { if (index !== currentStation) releasePlayer(index); });
+};
+
 const warmNeighbors = () => {
+  if (document.hidden) { releaseAllButCurrent(); return; }
   releaseIdle(currentStation);
   if (saveData()) return;
   neighborsOf(currentStation).forEach(index => {
@@ -1390,10 +1406,15 @@ document.addEventListener('visibilitychange', () => {
   dbg(`visibility ${document.visibilityState}`);
   // arrière-plan : pas d'AudioContext actif à côté de la station (voir
   // wakeAudioCtx) — un static en cours finit d'abord son passage
-  if (document.hidden) suspendAudioCtx();
-  if (document.visibilityState !== 'visible') return;
+  if (document.hidden) {
+    suspendAudioCtx();
+    releaseAllButCurrent();
+    return;
+  }
   const el = players[currentStation];
   if (!el.paused) syncToLive(currentStation, 10);
+  // retour au premier plan : on re-prépare les voisines pour des switchs rapides
+  if (started && !el.paused) scheduleWarm();
   if (Date.now() - clockSyncedAt > CLOCK_RESYNC_MS) syncClock();
 });
 
@@ -1505,8 +1526,16 @@ players.forEach((el, index) => {
   });
 });
 
+// journal : une ligne par minute en arrière-plan, pour dater la disparition
+// des contrôles de l'écran verrouillé par rapport au reste
+let lastBgBeat = 0;
 setInterval(() => {
   const el = players[currentStation];
+  if (document.hidden && Date.now() - lastBgBeat > 60000) {
+    lastBgBeat = Date.now();
+    const active = players.filter(p => !p.paused || p.networkState === HTMLMediaElement.NETWORK_LOADING).length;
+    dbg(`bg ${dbgName(currentStation)} ${el.paused ? 'PAUSED' : 'playing'} rs${el.readyState} actifs ${active}`);
+  }
   // jamais pendant un seek/buffering en cours : on relancerait la roue
   if (!el.paused && !el.seeking && el.readyState >= 3) {
     syncToLive(currentStation, 10);
