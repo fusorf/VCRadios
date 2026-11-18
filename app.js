@@ -1045,6 +1045,7 @@ const syncPlaybackState = () => {
   if (!('mediaSession' in navigator)) return;
   const playing = started && (!players[currentStation].paused || deferTimer !== null);
   const state = playing ? 'playing' : 'paused';
+  if (playing) applyLivePositionState();
   if (navigator.mediaSession.playbackState === state) return;
   try { navigator.mediaSession.playbackState = state; } catch (e) {}
   dbg(`ms state ${state}`);
@@ -1060,6 +1061,31 @@ const setupMediaSession = () => {
   navigator.mediaSession.setActionHandler('pause', () => { dbg('ms action pause'); pauseRadio(); });
   navigator.mediaSession.setActionHandler('previoustrack', () => { dbg('ms action prev'); step(-1); });
   navigator.mediaSession.setActionHandler('nexttrack', () => { dbg('ms action next'); step(1); });
+  // Interface "direct" : ni avance/recul ni déplacement dans le fichier (une
+  // radio ne se rembobine pas) — seulement lecture/pause et précédent/suivant
+  ['seekto', 'seekbackward', 'seekforward'].forEach(action => {
+    try { navigator.mediaSession.setActionHandler(action, null); } catch (e) {}
+  });
+  applyLivePositionState();
+};
+
+// Durée INFINIE annoncée au système, comme un vrai flux en direct : l'écran
+// verrouillé / l'autoradio n'affichent plus la durée du fichier (~1 h) ni une
+// barre de progression qui ne correspond à rien. Réappliqué à chaque
+// démarrage (le système peut repartir de la durée de l'élément audio).
+let livePositionStateOk = null; // null = pas encore essayé
+const applyLivePositionState = () => {
+  if (!('mediaSession' in navigator) || !navigator.mediaSession.setPositionState) return;
+  try {
+    navigator.mediaSession.setPositionState({ duration: Infinity, playbackRate: 1, position: 0 });
+    if (livePositionStateOk !== true) dbg('ms position: live (durée infinie)');
+    livePositionStateOk = true;
+  } catch (e) {
+    // moteur qui refuse Infinity : on n'annonce rien plutôt qu'une durée fausse
+    try { navigator.mediaSession.setPositionState(); } catch (e2) {}
+    if (livePositionStateOk !== false) dbg(`ms position: Infinity refusé (${e && e.name})`);
+    livePositionStateOk = false;
+  }
 };
 
 // --- Lecture ---------------------------------------------------------------
