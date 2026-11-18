@@ -39,6 +39,95 @@ const mod = (n, m) => ((n % m) + m) % m;
 
 const stationUrl = (station) => `${AUDIO_BASE_URL}/${station.file}`;
 
+const IS_IOS = /iP(hone|ad|od)/.test(navigator.userAgent)
+  || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+// iOS : la station n'est PAS lancée muette sous le static (voir "Entrée de
+// la station") mais par un play() différé. `?deferplay` force ce chemin sur
+// n'importe quel navigateur, pour le tester sans iPhone.
+const DEFER_PLAY = IS_IOS || /[?&]deferplay\b/.test(location.search);
+
+// --- Journal de débug embarqué ---------------------------------------------
+// iOS ne s'inspecte pas sans Mac : on garde en mémoire les derniers
+// événements de lecture (anneau de DBG_MAX lignes horodatées), affichables
+// sur l'appareil par un triple tap sur le libellé de build (bas gauche).
+// Ne coûte rien tant que l'overlay est fermé (un push), et ne lève jamais.
+// Heure murale (hh:mm:ss) et non performance.now() : ce dernier peut se
+// figer quand iOS suspend la page écran verrouillé, alors qu'on veut
+// justement dater ce qui s'y passe. Affiché du plus récent au plus ancien :
+// une capture d'écran montre d'abord la fin de l'histoire.
+const DBG_MAX = 80;
+const dbgLines = [];
+let dbgOverlay = null;
+
+// nom court de station : "radio/EMOTION.mp3" → "EMOTION"
+const dbgName = (index) => {
+  try { return stations[index].file.replace(/^.*\/|\.mp3$/g, ''); } catch (e) { return '#' + index; }
+};
+
+// ligne d'état de la station courante, en tête de l'overlay
+const dbgState = () => {
+  const el = players[currentStation];
+  return `${DEFER_PLAY ? 'defer' : 'muted'}${IS_IOS ? ' ios' : ''} · ${dbgName(currentStation)}`
+    + ` ${el.paused ? 'PAUSED' : 'playing'}${el.muted ? ' MUTED' : ''}`
+    + ` rs${el.readyState} ns${el.networkState} drift ${liveDrift(currentStation).toFixed(1)}s`
+    + ` · tok ${playToken}${tuning ? ' tuning' : ''}${entry ? ' entry' : ''}`
+    + ` · ctx ${audioCtx ? audioCtx.state : '-'}`
+    + ` · ms ${'mediaSession' in navigator ? navigator.mediaSession.playbackState : '-'}`
+    + `${document.hidden ? ' · hidden' : ''}`;
+};
+
+const dbgRender = () => {
+  try {
+    if (!dbgOverlay || dbgOverlay.hidden) return;
+    dbgOverlay.textContent = `${dbgStamp()} ${dbgState()}\n\n${dbgLines.slice().reverse().join('\n')}`;
+  } catch (e) {}
+};
+
+const dbgStamp = () => {
+  const d = new Date();
+  const p2 = (n) => (n < 10 ? '0' : '') + n;
+  return `${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}.${Math.floor(d.getMilliseconds() / 100)}`;
+};
+
+const dbg = (msg) => {
+  try {
+    dbgLines.push(`${dbgStamp()} ${msg}`);
+    if (dbgLines.length > DBG_MAX) dbgLines.shift();
+    dbgRender();
+  } catch (e) {}
+};
+
+const dbgToggle = () => {
+  try {
+    if (!dbgOverlay) {
+      dbgOverlay = document.createElement('pre');
+      dbgOverlay.id = 'debugLog';
+      dbgOverlay.hidden = true;
+      // un tap sur l'overlay le referme
+      dbgOverlay.addEventListener('click', () => { dbgOverlay.hidden = true; });
+      document.body.appendChild(dbgOverlay);
+    }
+    dbgOverlay.hidden = !dbgOverlay.hidden;
+    dbgRender();
+  } catch (e) {}
+};
+
+// Triple tap sur le libellé de build : 3 pointerup en moins de 700 ms
+// (pointerup plutôt que click : pas de délai ni d'heuristique de clic iOS
+// sur un élément non interactif)
+(() => {
+  const label = document.getElementById('buildVersion');
+  if (!label) return;
+  let taps = [];
+  label.addEventListener('pointerup', () => {
+    const t = performance.now();
+    taps = taps.filter(x => t - x < 700);
+    taps.push(t);
+    if (taps.length >= 3) { taps = []; dbgToggle(); }
+  });
+})();
+
 // --- Modèle radio "en direct" ----------------------------------------------
 // Chaque station avance sur une horloge murale depuis EPOCH, plus un décalage
 // aléatoire par station persisté en localStorage : la position est donc
@@ -169,6 +258,35 @@ const players = stations.map(station => {
   return el;
 });
 
+// Journal de débug : chaque play() (d'où qu'il vienne : app.js, offline.js)
+// et son éventuel rejet, plus les événements de lecture. `muted` n'a pas
+// d'événement propre : 'volumechange' le couvre, on ne note que ses bascules.
+players.forEach((el, index) => {
+  const name = dbgName(index);
+  const nativePlay = el.play.bind(el);
+  el.play = () => {
+    const p = nativePlay();
+    try {
+      // les play() de bénédiction iOS (silence) sont résumés en une ligne
+      if (!el.src.startsWith('data:')) {
+        dbg(`${name} play()${el.muted ? ' muted' : ''}`);
+        if (p && p.catch) p.catch(e => dbg(`${name} play REJECTED ${e && e.name}`));
+      }
+    } catch (e) {}
+    return p;
+  };
+  ['playing', 'pause', 'waiting', 'stalled'].forEach(type => {
+    el.addEventListener(type, () => dbg(`${name} ${type}`));
+  });
+  el.addEventListener('error', () => dbg(`${name} error ${el.error ? el.error.code : '?'}`));
+  let wasMuted = el.muted;
+  el.addEventListener('volumechange', () => {
+    if (el.muted === wasMuted) return;
+    wasMuted = el.muted;
+    dbg(`${name} ${wasMuted ? 'muted' : 'unmuted'}${el.paused ? ' (paused)' : ''}`);
+  });
+});
+
 const livePosition = (index) => {
   const elapsed = (now() - EPOCH) / 1000 + offsets[index];
   return mod(elapsed, stations[index].duration);
@@ -194,6 +312,8 @@ const syncToLive = (index, tolerance = 1.5) => {
     // position", appliquée par le navigateur dès que les données arrivent
     el.currentTime = pos;
     seekIntents[index] = pos;
+    // seuls les recalages d'un lecteur qui joue intéressent le journal
+    if (!el.paused) dbg(`${dbgName(index)} resync ${drift.toFixed(1)}s`);
   }
 };
 
@@ -246,22 +366,72 @@ const initAudioCtx = () => {
   staticGain = audioCtx.createGain();
   staticGain.gain.value = globalVolume;
   staticGain.connect(audioCtx.destination);
+  audioCtx.onstatechange = () => dbg(`ctx ${audioCtx.state}`);
+};
+
+// Le contexte ne tourne QUE pendant un son (static, SFX). Laissé "running"
+// en permanence, il garde une session audio Web Audio ouverte à côté de la
+// station : sur iOS, piste sérieuse pour le lecteur de l'écran verrouillé
+// qui disparaissait après ~10 min alors que la musique continuait. On le
+// suspend donc peu après le dernier son, et tout de suite quand la page
+// passe en arrière-plan.
+// Aucun son n'est perdu à la reprise : l'horloge d'un contexte suspendu est
+// figée, une source start()ée pendant que resume() est en cours part donc
+// de son début dès que le contexte tourne. Le seul coût est le délai de
+// resume() — masqué en réveillant le contexte dès le pointerdown, avant le
+// geste qui déclenchera le son (wakeAudioCtx).
+const CTX_IDLE_MS = 1500;
+let ctxVoices = 0;       // sources en cours de lecture
+let ctxIdleTimer = null;
+
+const wakeAudioCtx = () => {
+  if (!audioCtx) return;
+  if (ctxIdleTimer) { clearTimeout(ctxIdleTimer); ctxIdleTimer = null; }
+  // 'interrupted' (iOS : appel, Siri, autre app) se reprend de la même façon
+  if (audioCtx.state !== 'running' && audioCtx.state !== 'closed') {
+    try { const p = audioCtx.resume(); if (p && p.catch) p.catch(() => {}); } catch (e) {}
+  }
+  if (ctxVoices === 0) scheduleCtxSuspend();
+};
+
+const suspendAudioCtx = () => {
+  if (ctxIdleTimer) { clearTimeout(ctxIdleTimer); ctxIdleTimer = null; }
+  if (!audioCtx || ctxVoices > 0 || audioCtx.state !== 'running') return;
+  try { const p = audioCtx.suspend(); if (p && p.catch) p.catch(() => {}); } catch (e) {}
+};
+
+const scheduleCtxSuspend = () => {
+  if (ctxIdleTimer) clearTimeout(ctxIdleTimer);
+  ctxIdleTimer = setTimeout(suspendAudioCtx, CTX_IDLE_MS);
+};
+
+// Démarre une source en tenant le compte des sons en cours
+const startSource = (source) => {
+  wakeAudioCtx();
+  if (ctxIdleTimer) { clearTimeout(ctxIdleTimer); ctxIdleTimer = null; }
+  ctxVoices++;
+  source.addEventListener('ended', () => {
+    ctxVoices = Math.max(0, ctxVoices - 1);
+    if (ctxVoices > 0) return;
+    if (document.hidden) suspendAudioCtx(); else scheduleCtxSuspend();
+  });
+  source.start();
 };
 
 const playUiSfx = (kind) => {
   if (!audioCtx) return;
   const list = uiBuffers[kind];
   if (list.length === 0) return;
-  if (audioCtx.state === 'suspended') audioCtx.resume();
   const source = audioCtx.createBufferSource();
   source.buffer = list[Math.floor(Math.random() * list.length)];
   source.connect(staticGain);
-  source.start();
+  startSource(source);
 };
 
 // Static de changement de station : UN passage complet de l'échantillon
-// (~1 s), jamais tronqué. La station démarre dessous, muette (play()
-// immédiat), et entre après (voir armEntry / openEntry).
+// (~1 s), jamais tronqué. La station entre après un court moment de static
+// seul (voir "Entrée de la station" : muette sous le static, ou play()
+// différé sur iOS).
 let staticVoice = null;
 
 // Coupure (pause, nouveau switch) : court fondu, tout de suite
@@ -278,7 +448,6 @@ const stopStatic = () => {
 const playStatic = () => {
   stopStatic();
   if (!audioCtx || staticBuffers.length === 0) return;
-  if (audioCtx.state === 'suspended') audioCtx.resume();
   staticIndex = (staticIndex + 1) % staticBuffers.length;
   const buffer = staticBuffers[staticIndex];
   if (!buffer) return;
@@ -287,27 +456,76 @@ const playStatic = () => {
   const gain = audioCtx.createGain();
   source.connect(gain);
   gain.connect(staticGain);
-  source.start();
+  startSource(source);
   const voice = { source, gain };
   staticVoice = voice;
-  source.onended = () => { if (staticVoice === voice) staticVoice = null; };
+  source.addEventListener('ended', () => { if (staticVoice === voice) staticVoice = null; });
 };
 
 // --- Entrée de la station après le static ----------------------------------
 // La station est lancée tout de suite (sous le static, pour gagner le temps
 // de chargement) mais MUETTE, puis entre d'un coup quand elle est accrochée
 // ET que le static a joué au moins STATION_ENTRY_S : le static s'entend
-// d'abord seul, comme en jeu. `muted` (contrairement à `volume`) est
-// réglable sur iOS. Bonus iOS : le bout de lecture à la mauvaise position
-// avant recalage reste inaudible.
+// d'abord seul, comme en jeu.
+//
+// PAS sur iOS (DEFER_PLAY) : depuis l'introduction de cette entrée muette,
+// tout switch y restait silencieux après le static (seule la 1re station,
+// lancée sans `muted`, jouait). WebKit n'aime pas qu'on démute hors geste un
+// élément lancé muet. Sur iOS on ne touche donc JAMAIS à `muted` : le static
+// part, et le play() de la station est simplement différé de STATION_ENTRY_S
+// (deferPlay) — les lecteurs étant bénis au premier tap, un play() hors
+// geste y est permis. Même rendu : static seul, puis entrée franche.
 const STATION_ENTRY_S = 0.45;
 let entry = null;      // { index, notBefore }
 let entryTimer = null;
 
-// Rend le son à la station en attente (fin normale ou annulation)
+// Rend le son à la station en attente, sans rien relancer : sert tel quel
+// aux annulations (pause, play() refusé, nouveau switch)
 const releaseEntry = () => {
   if (entryTimer) { clearTimeout(entryTimer); entryTimer = null; }
-  if (entry) { players[entry.index].muted = false; entry = null; }
+  if (entry) {
+    dbg(`entry released ${dbgName(entry.index)}`);
+    players[entry.index].muted = false;
+    entry = null;
+  }
+};
+
+// Fin NORMALE de l'entrée (accord, ou délai d'accord dépassé) : rend le son,
+// puis vérifie que la station joue toujours. Filet : si le démute a mis
+// l'élément en pause (politique d'autoplay), on relance — tout de suite et
+// 150 ms après, la pause pouvant être asynchrone. Jamais après une pause
+// explicite ni un autre switch (jeton, station courante).
+const finishEntry = (index, token) => {
+  releaseEntry();
+  const check = () => {
+    if (!players[index].paused || token !== playToken || index !== currentStation) return;
+    dbg(`entry: ${dbgName(index)} paused after unmute, replay`);
+    playStation(index);
+  };
+  check();
+  setTimeout(check, 150);
+};
+
+// iOS : play() différé derrière le static, à la place de l'entrée muette.
+// Annulé par une pause ou un switch plus récent (timer effacé + jeton).
+let deferTimer = null;
+
+const cancelDeferredPlay = () => {
+  if (deferTimer) { clearTimeout(deferTimer); deferTimer = null; }
+};
+
+const deferPlay = (index) => {
+  cancelDeferredPlay();
+  // un switch est une nouvelle intention de lecture : périme les relances
+  // en attente de la station quittée
+  const token = ++playToken;
+  clearGestureRetry();
+  deferTimer = setTimeout(() => {
+    deferTimer = null;
+    if (token !== playToken || index !== currentStation) return;
+    dbg(`deferred play ${dbgName(index)}`);
+    playStation(index);
+  }, STATION_ENTRY_S * 1000);
 };
 
 // Posé AVANT le play()
@@ -323,13 +541,8 @@ const openEntry = (index) => {
   const token = playToken;
   entryTimer = setTimeout(() => {
     entryTimer = null;
-    releaseEntry();
-    // filet iOS : si le démute faisait mettre l'élément en pause (politique
-    // d'autoplay), on relance — avec le retry-au-geste en dernier recours
-    setTimeout(() => {
-      const el = players[index];
-      if (el.paused && token === playToken && index === currentStation) playStation(index);
-    }, 150);
+    dbg(`entry open ${dbgName(index)}`);
+    finishEntry(index, token);
   }, Math.max(0, entry.notBefore - performance.now()));
 };
 
@@ -340,7 +553,7 @@ const openEntry = (index) => {
 // C'est l'accord qui déclenche l'entrée de la station.
 let tuning = null;      // { index, from } : from = 1re position vue en lecture
 let tuningTimer = null;
-let tunedAt = 0;        // instant de l'accord (rattrapage d'un décrochage)
+let tunedAt = -Infinity;        // instant de l'accord (rattrapage d'un décrochage)
 const TUNE_STEP_S = 0.05;
 const TUNE_MAX_MS = 8000; // réseau mort : on rend le volume, on arrête le poll
 
@@ -360,15 +573,24 @@ const checkTuned = () => {
   const { index } = tuning;
   const el = players[index];
   if (index !== currentStation) { endTuning(); return; }
-  if (performance.now() - tuning.since > TUNE_MAX_MS) { endTuning(); releaseEntry(); return; }
+  if (performance.now() - tuning.since > TUNE_MAX_MS) {
+    dbg(`tune timeout ${dbgName(index)}`);
+    endTuning();
+    // une pause ou un refus de play() auraient déjà arrêté le poll : le
+    // jeton courant est bien celui de cette lecture
+    finishEntry(index, playToken);
+    return;
+  }
   if (el.paused || el.seeking || el.readyState < 3 || liveDrift(index) > 2.5) {
     tuning.from = null;
     return;
   }
   if (tuning.from === null) { tuning.from = el.currentTime; return; }
   if (el.currentTime - tuning.from >= TUNE_STEP_S) {
+    const since = tuning.since;
     endTuning();
     tunedAt = performance.now();
+    dbg(`tuned ${dbgName(index)} +${Math.round(tunedAt - since)}ms`);
     openEntry(index);
   }
 };
@@ -630,6 +852,9 @@ const DRAG_SLOP = 6;           // px : en dessous, c'est un tap
 const FLICK_STALE_MS = 100;    // doigt immobile avant relâcher = pas de flick
 
 container.addEventListener('pointerdown', e => {
+  // réveille l'AudioContext (suspendu au repos) dès le début du geste : il
+  // tourne déjà quand le relâcher déclenche le static
+  wakeAudioCtx();
   if (!started || pickerOpen() || returningToMenu) return;
   dragging = true;
   dragMoved = false;
@@ -698,15 +923,36 @@ container.addEventListener('pointercancel', endDrag);
 // standardisé en PNG. Titre de station en repli pendant les intros DJ ou sur
 // les stations parlées (K-Chat, VCPR).
 let lastMediaKey = '';
+let mediaMetaStation = -1; // station de l'objet MediaMetadata en place
 const updateMediaSessionMetadata = () => {
   if (!('mediaSession' in navigator)) return;
   const station = stations[currentStation];
   const track = currentTrack();
   lastMediaKey = currentStation + '|' + (track ? track[1] : '');
+  const title = track ? track[1] : station.name;
+  const artist = track ? track[2] : 'Vice City Radio';
+  // Même station, seul le morceau change (toutes les ~4-5 min, souvent écran
+  // verrouillé) : on retouche titre et artiste sur l'objet EXISTANT au lieu
+  // de le remplacer. Un nouvel objet fait recharger la pochette et
+  // reconstruire la fiche Now Playing en arrière-plan — suspect pour le
+  // lecteur de l'écran verrouillé qui disparaissait sur iOS. (Différer la
+  // mise à jour tant que la page est cachée aurait figé le titre là où on le
+  // lit justement : sur l'écran verrouillé.)
+  const meta = navigator.mediaSession.metadata;
+  if (meta && mediaMetaStation === currentStation) {
+    try {
+      if (meta.title !== title) meta.title = title;
+      if (meta.artist !== artist) meta.artist = artist;
+      dbg(`meta title "${title}"`);
+      return;
+    } catch (e) {} // objet non modifiable (vieux moteur) : on le recrée
+  }
+  mediaMetaStation = currentStation;
+  dbg(`meta new ${dbgName(currentStation)} "${title}"`);
   const art = `logos/notif/${stationArtKey(currentStation)}.png`;
   navigator.mediaSession.metadata = new MediaMetadata({
-    title: track ? track[1] : station.name,
-    artist: track ? track[2] : 'Vice City Radio',
+    title,
+    artist,
     album: station.name,
     artwork: [
       { src: art, sizes: '192x192', type: 'image/png' },
@@ -714,6 +960,21 @@ const updateMediaSessionMetadata = () => {
     ]
   });
 };
+
+// État de lecture déclaré explicitement, sur les événements réels de la
+// station COURANTE : sans ça le système le devine, et peut conclure à tort
+// que plus rien ne joue. La pause de la station quittée pendant un switch
+// n'est pas "courante" (currentStation a déjà changé) : pas de passage par
+// 'paused' entre deux stations.
+players.forEach((el, index) => {
+  if (!('mediaSession' in navigator)) return;
+  const set = (state) => {
+    if (index !== currentStation) return;
+    try { navigator.mediaSession.playbackState = state; } catch (e) {}
+  };
+  el.addEventListener('playing', () => set('playing'));
+  el.addEventListener('pause', () => set('paused'));
+});
 
 const setupMediaSession = () => {
   if (!('mediaSession' in navigator)) return;
@@ -829,12 +1090,18 @@ const stopAll = () => {
 // Pause explicite (bouton pause du menu, Media Session) : annule aussi
 // toute relance différée en attente
 const pauseRadio = () => {
+  dbg('pauseRadio');
   playToken++;
   clearGestureRetry();
+  cancelDeferredPlay();
   endTuning();
   stopStatic();
   releaseEntry();
   stopAll();
+  // pause en plein switch : aucun lecteur ne jouait, donc aucun événement
+  // 'pause' ne viendra mettre à jour l'état Media Session ni le bouton
+  try { if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused'; } catch (e) {}
+  updatePauseButton();
 };
 
 const setStation = (index) => {
@@ -845,21 +1112,34 @@ const setStation = (index) => {
   updateStationTitle();
   retargetMask();
 
-  // Coupure immédiate + static, et play() de la nouvelle station TOUT DE
-  // SUITE, dans le geste : sur iOS, preload est ignoré — la requête ne part
-  // qu'au play(), qui était différé de ~300 ms (fin du static minimal).
-  // La station démarre muette sous le static, puis entre quand elle est
+  dbg(`setStation ${dbgName(index)}`);
+
+  // Coupure immédiate + static. Ensuite, hors iOS : play() de la nouvelle
+  // station TOUT DE SUITE, muette sous le static, qui entre quand elle est
   // réellement accrochée et que le static a joué seul un moment (armEntry).
+  // Sur iOS (DEFER_PLAY) : aucun `muted`, play() différé de STATION_ENTRY_S
+  // (deferPlay) — voir "Entrée de la station".
   // PAS de play()+pause() de "bénédiction" ici : la course play→pause→play
   // peut laisser l'élément en pause sur iOS.
+  cancelDeferredPlay();
   stopAll();
   // libère tout de suite les connexions des stations quittées (switchs en
   // rafale compris) pour que la requête de la station visée parte sans attendre
   releaseIdle(index);
   playStatic();
-  armEntry(index);
+  // gardé dans les deux cas : sert aussi à la reprise du static ('waiting')
   startTuning(index);
-  playStation(index);
+  if (DEFER_PLAY) {
+    releaseEntry(); // par sécurité : aucune station ne reste muette sur ce chemin
+    // Page cachée (piste suivante/précédente depuis l'écran verrouillé) :
+    // play() IMMÉDIAT. Plus aucun son ne tourne après stopAll(), iOS peut
+    // geler le timer du play différé — la station ne repartirait jamais.
+    if (document.hidden) playStation(index);
+    else deferPlay(index);
+  } else {
+    armEntry(index);
+    playStation(index);
+  }
 };
 
 // --- Déblocage iOS ---------------------------------------------------------
@@ -871,10 +1151,9 @@ const setStation = (index) => {
 // préchargement par élément), puis on restaure la vraie source — le flag
 // d'autorisation est porté par l'élément, pas par la source.
 const SILENT_WAV = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
-const IS_IOS = /iP(hone|ad|od)/.test(navigator.userAgent)
-  || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
 const blessAllPlayers = () => {
+  dbg('bless players');
   players.forEach((el, index) => {
     if (index === currentStation) return; // la station courante joue dans le geste
     const realSrc = el.src;
@@ -924,7 +1203,7 @@ const startRadio = (index) => {
   retargetMask();
 
   initAudioCtx();
-  if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+  wakeAudioCtx();
 
   if (IS_IOS) blessAllPlayers();
   playStation(currentStation);
@@ -997,10 +1276,16 @@ const pauseButton = document.getElementById('pauseButton');
 pauseButton.style.clipPath = randomTilePoly();
 pauseButton.addEventListener('pointerenter', morphControl);
 
+// Un play différé en attente (iOS, entre deux stations) compte comme une
+// lecture : le bouton ne clignote pas pendant un switch
 const updatePauseButton = () => {
-  const anyPlaying = players.some(el => !el.paused);
+  const anyPlaying = deferTimer !== null || players.some(el => !el.paused);
   pauseButton.style.display = pickerOpen() && anyPlaying ? 'flex' : 'none';
 };
+
+// Suit l'état réel des lecteurs : une pause ou une reprise depuis l'écran
+// verrouillé (Media Session) ne passe par aucun bouton de l'app
+players.forEach(el => ['play', 'pause'].forEach(type => el.addEventListener(type, updatePauseButton)));
 
 pauseButton.addEventListener('click', () => {
   playUiSfx('select');
@@ -1054,7 +1339,7 @@ const initPicker = () => {
 // avant même le choix d'une station
 const primeAudio = () => {
   initAudioCtx();
-  if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+  wakeAudioCtx();
 };
 document.addEventListener('pointerdown', primeAudio, { capture: true, once: true });
 document.addEventListener('keydown', primeAudio, { capture: true, once: true });
@@ -1078,6 +1363,10 @@ setInterval(() => {
 
 // Corrige la dérive après une mise en veille de l'onglet ou de l'appareil
 document.addEventListener('visibilitychange', () => {
+  dbg(`visibility ${document.visibilityState}`);
+  // arrière-plan : pas d'AudioContext actif à côté de la station (voir
+  // wakeAudioCtx) — un static en cours finit d'abord son passage
+  if (document.hidden) suspendAudioCtx();
   if (document.visibilityState !== 'visible') return;
   const el = players[currentStation];
   if (!el.paused) syncToLive(currentStation, 10);
@@ -1131,13 +1420,21 @@ players.forEach((el, index) => {
       }
     };
     schedule(() => {
+      // Élément déjà réparé entre-temps (nouvelle source posée par
+      // offline.js, autre retry) : surtout pas de load(), qui mettrait en
+      // pause une lecture repartie — ex. copie hors ligne évincée → 404 du
+      // SW → offline.js repasse au réseau et relance ; ce load() coupait le
+      // flux 1,5 s plus tard.
+      if (!el.error) return;
+      // à décider AVANT load(), qui remet l'élément en pause : on relance si
+      // la station joue encore (lecture demandée depuis l'erreur), ou si elle
+      // jouait à l'erreur sans pause explicite ni autre demande depuis
+      const resume = index === currentStation && started
+        && (!el.paused || (wasPlaying && token === playToken));
+      dbg(`${dbgName(index)} error retry${resume ? ' + play' : ''}`);
       el.load();
-      if (index === currentStation && started && wasPlaying && token === playToken) {
-        syncToLive(index);
-        el.play().catch(() => {});
-      } else {
-        syncToLive(index);
-      }
+      syncToLive(index);
+      if (resume) el.play().catch(() => {});
     });
   });
 });

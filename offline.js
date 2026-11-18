@@ -389,6 +389,9 @@ const downloadStation = async (index) => {
       JSON.stringify({ size: total, chunk: DL_CHUNK, count }),
       { headers: { 'Content-Type': 'application/json' } }
     ));
+    // cache.put n'est pas annulable : une purge arrivée pendant l'écriture
+    // ne doit pas finir en "téléchargé" pointant vers une entrée effacée
+    if (signal.aborted) throw abortError();
     // un éventuel fichier entier de l'ancien format devient inutile
     try { await cache.delete(offlineUrl(station)); } catch (e) {}
     state.status = 'done';

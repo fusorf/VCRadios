@@ -8,7 +8,7 @@
 // rempli par offline.js (téléchargements pour écoute hors ligne).
 // Réécrit par scripts/stamp-version.js à chaque build (= numéro de build) :
 // chaque release change donc ce fichier, déclenchant la mise à jour du SW
-const CACHE_VERSION = '2026.11.18-1457';
+const CACHE_VERSION = '2026.11.18-1604';
 const STATIC_CACHE = 'static-' + CACHE_VERSION;
 // versionné : un cache d'images éternel servait les images modifiées
 // périmées pour toujours
@@ -119,7 +119,7 @@ const cacheFirst = async (request, cacheName) => {
 // attendait l'échec du fetch (des dizaines de secondes). La NAVIGATION bascule
 // donc sur le cache après SHELL_TIMEOUT_MS ; pendant les 10 s qui suivent, ses
 // sous-ressources viennent aussi du cache (jamais de mélange de versions). Le
-// fetch réseau continue en fond et rafraîchit le cache pour le lancement suivant.
+// fetch réseau continue en fond (sans écrire dans le cache : voir network).
 const SHELL_TIMEOUT_MS = 3000;
 let preferCacheUntil = 0;
 
@@ -141,10 +141,10 @@ const networkFirst = (event) => {
   const network = (async () => {
     const preloaded = isNav ? await event.preloadResponse : undefined;
     const response = preloaded || await fetch(request);
-    if (response.ok) {
-      const copy = response.clone();
-      putDone = caches.open(STATIC_CACHE).then(cache => cache.put(request, copy)).catch(() => {});
-    }
+    // PAS de mise en cache des réponses réseau : écrire les fichiers d'une
+    // version N+1 dans le cache static-N (celui du SW encore en place)
+    // mélangeait les versions du shell. Le précache, atomique et versionné
+    // (addAll à l'install de chaque nouveau SW), suffit au repli hors ligne.
     return response;
   })();
   // garde le SW en vie jusqu'à la mise en cache, même si le cache a répondu

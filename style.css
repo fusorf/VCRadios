@@ -580,10 +580,17 @@ body {
 /* Numéro de build de débug : coin bas-gauche, minuscule et très atténué */
 #buildVersion {
   position: fixed;
-  left: 8px;
-  bottom: calc(6px + env(safe-area-inset-bottom, 0px));
+  /* même position visuelle qu'avant (8px / 6px), mais le padding agrandit
+     la zone de tap : 10px de haut seraient introuvables au doigt */
+  left: 0;
+  bottom: env(safe-area-inset-bottom, 0px);
+  padding: 14px 14px 6px 8px;
   z-index: 96;
-  pointer-events: none;
+  /* cliquable (lui seul) : un triple tap ouvre le journal de débug.
+     manipulation = pas de zoom au double tap sur iOS */
+  pointer-events: auto;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
   user-select: none;
   -webkit-user-select: none;
   font-family: ui-monospace, Menlo, Consolas, monospace;
@@ -591,6 +598,28 @@ body {
   letter-spacing: 0.3px;
   color: #FF98E1;
   opacity: 0.35;
+}
+
+/* Journal de débug embarqué (triple tap sur le numéro de build) : overlay
+   plein écran, un tap le referme */
+#debugLog {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  margin: 0;
+  padding: calc(10px + env(safe-area-inset-top, 0px)) 10px calc(10px + env(safe-area-inset-bottom, 0px));
+  overflow: auto;
+  background: rgba(0, 0, 0, 0.88);
+  color: #9dffb0;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+#debugLog[hidden] {
+  display: none;
 }
 
 /* croix de fermeture : slot habituel du bouton bas-droite (hors de la
