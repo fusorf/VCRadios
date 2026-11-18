@@ -760,13 +760,16 @@ const maskTopMin = () => {
   const t = trackInfo.getBoundingClientRect();
   const lineH = parseFloat(getComputedStyle(trackInfo).fontSize) * 1.4 || 0;
   const bottom = Math.max(stationTitle.getBoundingClientRect().bottom, t.top + lineH);
-  const pct = bottom / (window.innerHeight || 1) * 100 + 3;
+  // 10 px sous la ligne du morceau, pas plus (l'écart paraissait trop grand)
+  const pct = (bottom + 10) / (window.innerHeight || 1) * 100;
   return Math.max(12, Math.min(pct, 40));
 };
 
 const randomMaskPoints = () => {
   const top = maskTopMin();
-  const topSpan = Math.max(6, 28 - top); // garde un peu d'irrégularité
+  // irrégularité : 16 points sur desktop (12-28 %), 3 sous le titre sur
+  // téléphone, pour ne pas recreuser l'écart
+  const topSpan = top > 12 ? 3 : 16;
   return [
     { x: rand(8, 24), y: rand(top, top + topSpan) }, // haut gauche
     { x: rand(76, 92), y: rand(top, top + topSpan) }, // haut droit
@@ -1460,7 +1463,11 @@ players.forEach((el, index) => {
     if (el.preload === 'none' && el.paused) return;
     // ne relancer la lecture que si elle était en cours au moment de l'erreur
     // et qu'aucune pause explicite n'est intervenue depuis
-    const wasPlaying = !el.paused;
+    // le moteur peut avoir déjà mis l'élément en pause au moment de l'erreur
+    // (Chrome sur erreur de décodage) : la station courante "devait jouer" tant
+    // que l'utilisateur n'a pas mis en pause lui-même
+    const wasPlaying = !el.paused
+      || (index === currentStation && started && playToken !== explicitPauseToken);
     // station téléchargée qui jouait en streaming : bascule tout de suite sur
     // la copie locale (offline.js) plutôt que de réessayer le réseau
     if (window.vcrOffline && window.vcrOffline.takeOver
