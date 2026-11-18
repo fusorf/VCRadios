@@ -12,6 +12,13 @@
 }
 
 /* Général */
+/* Marges des zones système (encoche / Dynamic Island, barre d'accueil),
+   centralisées : surchargeables pour tester la mise en page iPhone */
+:root {
+  --sat: env(safe-area-inset-top, 0px);
+  --sab: env(safe-area-inset-bottom, 0px);
+}
+
 body {
   margin: 0;
   background: #000;
@@ -59,7 +66,7 @@ body {
    logo et le wordmark restent visibles sur son fond noir. */
 .hud {
   position: fixed;
-  top: calc(44px + env(safe-area-inset-top, 0px));
+  top: calc(44px + var(--sat));
   left: 20px;
   right: 24px;
   z-index: 95;
@@ -117,7 +124,7 @@ body {
 /* Titre de la station courante, en haut au centre */
 #stationTitle {
   position: fixed;
-  top: calc(14px + env(safe-area-inset-top, 0px));
+  top: calc(14px + var(--sat));
   left: 50%;
   transform: translateX(-50%);
   z-index: 60;
@@ -134,7 +141,7 @@ body {
 /* Titre - artiste du morceau en cours, sous le nom de la station */
 #trackInfo {
   position: fixed;
-  top: calc(20px + clamp(1.4rem, 3.6vw, 2.3rem) + env(safe-area-inset-top, 0px));
+  top: calc(20px + clamp(1.4rem, 3.6vw, 2.3rem) + var(--sat));
   left: 50%;
   transform: translateX(-50%);
   z-index: 60;
@@ -148,6 +155,32 @@ body {
   max-width: 92vw;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Écran étroit (téléphone en portrait) : le logo et le wordmark occupent
+   toute la largeur, le titre centré tombait dessus. On empile donc :
+   zone système, logo + wordmark, nom de la station, morceau. Le masque
+   (app.js) ouvre sa fenêtre sous ce bloc. */
+@media (max-width: 640px) {
+  .hud {
+    top: calc(12px + var(--sat));
+  }
+
+  /* toujours sur une ligne à côté du logo (passait sur deux lignes selon
+     la largeur et le rendu de la police) */
+  .wordmark {
+    white-space: nowrap;
+    font-size: min(1.8rem, 6.6vw);
+  }
+
+  /* hauteur du logo : 150 px de large, ratio 900x476 → ~80 px */
+  #stationTitle {
+    top: calc(12px + 80px + 14px + var(--sat));
+  }
+
+  #trackInfo {
+    top: calc(12px + 80px + 14px + 1.4rem + 8px + var(--sat));
+  }
 }
 
 /* Grille de choix de station (écran d'accueil, sert de geste de déblocage) */
@@ -234,7 +267,7 @@ body {
 .controls-corner {
   position: fixed;
   right: 18px;
-  bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+  bottom: calc(18px + var(--sab));
   z-index: 80;
   display: flex;
   align-items: center;
@@ -443,8 +476,16 @@ body {
   gap: clamp(10px, 2vh, 18px);
   box-sizing: border-box;
   max-height: 100dvh;
-  padding: calc(16px + env(safe-area-inset-top, 0px)) 16px
-           calc(80px + env(safe-area-inset-bottom, 0px));
+  padding: calc(16px + var(--sat)) 16px
+           calc(80px + var(--sab));
+}
+
+/* Écran étroit : le logo + wordmark (au-dessus du panneau) occupent le
+   haut, la feuille commence dessous */
+@media (max-width: 640px) {
+  .offline-sheet {
+    padding-top: calc(12px + 80px + 14px + var(--sat));
+  }
 }
 
 .offline-title {
@@ -583,7 +624,7 @@ body {
   /* même position visuelle qu'avant (8px / 6px), mais le padding agrandit
      la zone de tap : 10px de haut seraient introuvables au doigt */
   left: 0;
-  bottom: env(safe-area-inset-bottom, 0px);
+  bottom: var(--sab);
   padding: 14px 14px 6px 8px;
   z-index: 96;
   /* cliquable (lui seul) : un triple tap ouvre le journal de débug.
@@ -607,7 +648,7 @@ body {
   inset: 0;
   z-index: 200;
   margin: 0;
-  padding: calc(10px + env(safe-area-inset-top, 0px)) 10px calc(10px + env(safe-area-inset-bottom, 0px));
+  padding: calc(10px + var(--sat)) 10px calc(10px + var(--sab));
   overflow: auto;
   background: rgba(0, 0, 0, 0.88);
   color: #9dffb0;
@@ -627,5 +668,5 @@ body {
 .offline-close {
   position: fixed;
   right: 18px;
-  bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+  bottom: calc(18px + var(--sab));
 }

@@ -752,12 +752,28 @@ const trackInfo = document.getElementById('trackInfo');
 
 const rand = (a, b) => a + Math.random() * (b - a);
 
-const randomMaskPoints = () => [
-  { x: rand(8, 24), y: rand(12, 28) }, // haut gauche
-  { x: rand(76, 92), y: rand(12, 28) }, // haut droit
-  { x: rand(76, 92), y: rand(72, 88) }, // bas droit
-  { x: rand(8, 24), y: rand(72, 88) }  // bas gauche
-];
+// Haut de la fenêtre jamais au-dessus du nom de la station et du morceau :
+// sur téléphone en portrait, ils sont empilés sous le logo (style.css) et
+// la fenêtre passait dessus.
+const maskTopMin = () => {
+  // la ligne du morceau compte même vide (titre affiché plus tard)
+  const t = trackInfo.getBoundingClientRect();
+  const lineH = parseFloat(getComputedStyle(trackInfo).fontSize) * 1.4 || 0;
+  const bottom = Math.max(stationTitle.getBoundingClientRect().bottom, t.top + lineH);
+  const pct = bottom / (window.innerHeight || 1) * 100 + 3;
+  return Math.max(12, Math.min(pct, 40));
+};
+
+const randomMaskPoints = () => {
+  const top = maskTopMin();
+  const topSpan = Math.max(6, 28 - top); // garde un peu d'irrégularité
+  return [
+    { x: rand(8, 24), y: rand(top, top + topSpan) }, // haut gauche
+    { x: rand(76, 92), y: rand(top, top + topSpan) }, // haut droit
+    { x: rand(76, 92), y: rand(72, 88) }, // bas droit
+    { x: rand(8, 24), y: rand(72, 88) }  // bas gauche
+  ];
+};
 
 // Masque fermé (les 4 points au centre) avant le lancement
 let maskPoints = [{ x: 50, y: 50 }, { x: 50, y: 50 }, { x: 50, y: 50 }, { x: 50, y: 50 }];
@@ -822,6 +838,12 @@ const currentTrack = () => {
   return current;
 };
 
+// Titre / artiste affichés pour une entrée de tracklist. Coupure pub
+// ([début, ADS], tracks.js) : « Publicités » + nom de la station.
+const trackLabel = (track) => track[1] === ADS
+  ? { title: T.ads, artist: stations[currentStation].name }
+  : { title: track[1], artist: track[2] };
+
 // Clé de l'artwork de notif (radio/EMOTION.mp3 -> EMOTION)
 const stationArtKey = (index) => stations[index].file.slice(6, -4);
 
@@ -833,7 +855,8 @@ const setTrackText = (text) => {
 const updateTrackInfo = () => {
   if (players[currentStation].paused) { setTrackText(''); return; }
   const track = currentTrack();
-  setTrackText(track ? `${track[1]} — ${track[2]}` : '');
+  const label = track && trackLabel(track);
+  setTrackText(label ? `${label.title} — ${label.artist}` : '');
   // rafraîchit la notif quand le morceau change en cours de lecture
   const key = currentStation + '|' + (track ? track[1] : '');
   if (key !== lastMediaKey) updateMediaSessionMetadata();
@@ -929,8 +952,9 @@ const updateMediaSessionMetadata = () => {
   const station = stations[currentStation];
   const track = currentTrack();
   lastMediaKey = currentStation + '|' + (track ? track[1] : '');
-  const title = track ? track[1] : station.name;
-  const artist = track ? track[2] : 'Vice City Radio';
+  const label = track && trackLabel(track);
+  const title = label ? label.title : station.name;
+  const artist = label ? label.artist : 'Vice City Radio';
   // Même station, seul le morceau change (toutes les ~4-5 min, souvent écran
   // verrouillé) : on retouche titre et artiste sur l'objet EXISTANT au lieu
   // de le remplacer. Un nouvel objet fait recharger la pochette et
