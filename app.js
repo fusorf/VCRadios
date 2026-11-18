@@ -106,7 +106,7 @@ const dbgState = () => {
 const dbgRender = () => {
   try {
     if (!dbgOverlay || dbgOverlay.hidden) return;
-    dbgOverlay.textContent = `${dbgStamp()} ${dbgState()}\n\n${dbgLines.slice().reverse().join('\n')}`;
+    dbgOverlay.textContent = `${buildLabel()}\n${dbgStamp()} ${dbgState()}\n\n${dbgLines.slice().reverse().join('\n')}`;
   } catch (e) {}
 };
 
@@ -195,12 +195,11 @@ const clockLabel = () => clockError === null
   ? 'device clock'
   : `clock ${clockOffset >= 0 ? '+' : ''}${Math.round(clockOffset)} ±${Math.round(clockError)} ms`;
 
-// Libellé de débug discret (bas gauche), complété par version.js
-const renderBuildLabel = () => {
-  const el = document.getElementById('buildVersion');
-  if (!el || typeof BUILD_VERSION === 'undefined') return;
-  el.textContent = `build ${BUILD_VERSION} · ${clockLabel()}`;
-};
+// Build + horloge : affichés seulement en tête du journal de débug (le coin
+// bas-gauche #buildVersion n'est plus qu'une zone de triple tap invisible).
+// Appelé par version.js une fois BUILD_VERSION connu, et à chaque resync.
+const buildLabel = () => `build ${typeof BUILD_VERSION === 'undefined' ? '?' : BUILD_VERSION} · ${clockLabel()}`;
+const renderBuildLabel = () => dbgRender();
 
 const sampleClock = async () => {
   const ctrl = new AbortController();

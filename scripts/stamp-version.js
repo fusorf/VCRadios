@@ -1,5 +1,5 @@
 // Tamponne le numéro de build (date + heure, heure de Paris) avant une release :
-// - version.js : affiché discrètement en bas à gauche de l'app ;
+// - version.js : affiché en tête du journal de débug (triple tap bas gauche) ;
 // - pwabuilder-adv-sw.js : CACHE_VERSION = même numéro, donc chaque release
 //   modifie le SW → mise à jour du précache chez tous les utilisateurs.
 // Usage : node scripts/stamp-version.js

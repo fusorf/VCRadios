@@ -618,27 +618,21 @@ body {
   filter: brightness(1.25);
 }
 
-/* Numéro de build de débug : coin bas-gauche, minuscule et très atténué */
+/* Zone de débug invisible (coin bas-gauche) : un triple tap ouvre le
+   journal, qui affiche build et horloge. Vide, donc taille fixe. */
 #buildVersion {
   position: fixed;
-  /* même position visuelle qu'avant (8px / 6px), mais le padding agrandit
-     la zone de tap : 10px de haut seraient introuvables au doigt */
   left: 0;
   bottom: var(--sab);
-  padding: 14px 14px 6px 8px;
+  width: 56px;
+  height: 36px;
   z-index: 96;
-  /* cliquable (lui seul) : un triple tap ouvre le journal de débug.
-     manipulation = pas de zoom au double tap sur iOS */
+  /* manipulation = pas de zoom au double tap sur iOS */
   pointer-events: auto;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
   user-select: none;
   -webkit-user-select: none;
-  font-family: ui-monospace, Menlo, Consolas, monospace;
-  font-size: 9px;
-  letter-spacing: 0.3px;
-  color: #FF98E1;
-  opacity: 0.35;
 }
 
 /* Journal de débug embarqué (triple tap sur le numéro de build) : overlay
